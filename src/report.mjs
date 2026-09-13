@@ -89,7 +89,7 @@ export function renderReport(state) {
     `| Run logs | \`${state.runDir}\` |`,
     `| Model | ${state.dryRun ? `${state.model} (dry run, not called)` : state.model} |`,
     ...(state.sandbox
-      ? [`| Sandbox | ${state.sandbox.enabled ? "on: Claude and the gate ran under macOS Seatbelt (profiles in the run folder)" : "**off: Claude and the gate ran with full user permissions**"} |`]
+      ? [`| Sandbox | ${state.sandbox.enabled ? "on: install, Claude, and the gate ran under macOS Seatbelt (profiles in the run folder)" : "**off: install, Claude, and the gate ran with full user permissions**"} |`]
       : []),
     ...(state.stepsFile ? [`| Steps file | \`${state.stepsFile.source}\` (copy saved as steps.md, sha256 \`${state.stepsFile.sha256.slice(0, 12)}\`) |`] : []),
     ...(state.runner?.commit ? [`| Runner | build-loop \`${state.runner.commit.slice(0, 7)}\`${state.runner.dirty ? " with uncommitted changes" : ""} |`] : []),
