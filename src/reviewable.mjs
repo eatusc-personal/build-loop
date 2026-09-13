@@ -6,9 +6,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { isBinaryForGit } from "./git.mjs";
 
-export const TEXT_EXTENSIONS = new Set([
-  ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".json", ".md", ".css",
-  ".html", ".yaml", ".yml", ".txt", ".sh", ".sql",
+// Real binary formats that may legitimately change in a step. Anything git calls
+// binary that is not one of these fails, whatever its extension.
+export const BINARY_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp", ".tiff",
+  ".pdf", ".woff", ".woff2", ".ttf", ".otf", ".eot",
+  ".zip", ".gz", ".tgz", ".br", ".zst",
+  ".mp3", ".mp4", ".m4a", ".wav", ".ogg", ".webm", ".mov",
+  ".wasm", ".sqlite", ".db",
 ]);
 
 // Bytes 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F. Newline, carriage return, and tab are fine.
@@ -27,11 +32,13 @@ export function findControlChars(text) {
 
 // files: [{ path, binary, text }], where binary is git's verdict on the new
 // content and text is the file's content. Returns one message per problem file.
+// Every file is scanned for control characters unless it is a known binary
+// format that git also calls binary.
 export function reviewProblems(files) {
   const problems = [];
   for (const f of files) {
-    const hasTextExtension = TEXT_EXTENSIONS.has(path.extname(f.path).toLowerCase());
-    if (f.binary && !hasTextExtension) continue; // an image or other real binary
+    const knownBinary = BINARY_EXTENSIONS.has(path.extname(f.path).toLowerCase());
+    if (f.binary && knownBinary) continue; // an image, font, or other real binary
     const hits = findControlChars(f.text ?? "");
     if (hits.length) {
       const where = hits.slice(0, 5).map((h) => `line ${h.line} (${h.code})`).join(", ");
