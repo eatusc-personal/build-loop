@@ -19,7 +19,9 @@ build-loop runs [--into <branch>]
   --dry-run              do everything except call Claude; print each
                          assembled prompt instead
   --claude-cmd <path>    command to run instead of \`claude\`; also read
-                         from env BUILD_LOOP_CLAUDE`;
+                         from env BUILD_LOOP_CLAUDE
+  --no-sandbox           run Claude and the gate without the macOS sandbox
+                         (not recommended; see README)`;
 
 const OPTIONS = {
   target: { type: "string" },
@@ -34,6 +36,7 @@ const OPTIONS = {
   "dry-run": { type: "boolean" },
   "claude-cmd": { type: "string" },
   into: { type: "string" },
+  "no-sandbox": { type: "boolean" },
   help: { type: "boolean", short: "h" },
 };
 
@@ -92,5 +95,6 @@ export function parseCli(argv, env = {}) {
     dryRun: Boolean(values["dry-run"]),
     claudeCmd,
     claudeCmdGiven: claudeCmd !== null,
+    sandbox: !values["no-sandbox"],
   };
 }

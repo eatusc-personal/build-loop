@@ -258,6 +258,19 @@ describe("build-loop against a throwaway repo", () => {
     expect(r.report).toMatch(/\| 1 \| Step 1: Make it green \| landed \| 1 \|/);
   });
 
+  it("resets staged changes too when a step runs out of attempts", () => {
+    const target = makeTarget();
+    const r = runLoop(target, writeSteps(stepsGreen), {
+      plan: [{ do: "stage", path: "status.txt", content: "red\n" }],
+      extra: ["--attempts", "1", "--no-sandbox"],
+    });
+    expect(r.code).toBe(1);
+    expect(r.report).toMatch(/\| failed \| 1 \|.*\| gate \|/);
+    const worktree = r.report.match(/\| Worktree \| `([^`]+)` \|/)[1];
+    expect(sh(worktree, "git", ["status", "--porcelain"])).toBe("");
+    expect(fs.readFileSync(path.join(worktree, "status.txt"), "utf8")).toBe("green\n");
+  });
+
   it("kills and reports a Claude call that runs past the timeout", () => {
     const target = makeTarget();
     const r = runLoop(target, writeSteps(stepsGreen), {

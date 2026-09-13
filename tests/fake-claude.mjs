@@ -4,6 +4,7 @@
 //
 //   FAKE_CLAUDE_PLAN   JSON array of actions, one per call; the last repeats.
 //                      { "do": "write", "path": "file", "content": "..." }
+//                      { "do": "stage", "path": "file", "content": "..." }  write, then git add
 //                      { "do": "nothing" }
 //                      { "do": "sleep", "ms": 60000 }
 //                      { "do": "orphan", "path": "file", "ms": 1500 }  start a
@@ -36,6 +37,10 @@ if (action.do === "write") {
   const target = path.join(process.cwd(), action.path);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, action.content ?? "");
+} else if (action.do === "stage") {
+  const { execFileSync } = await import("node:child_process");
+  fs.writeFileSync(path.join(process.cwd(), action.path), action.content ?? "");
+  execFileSync("git", ["add", action.path], { cwd: process.cwd() });
 } else if (action.do === "orphan") {
   const { spawn } = await import("node:child_process");
   const target = path.join(process.cwd(), action.path);

@@ -19,6 +19,7 @@ describe("parseCli", () => {
       dryRun: false,
       claudeCmd: null,
       claudeCmdGiven: false,
+      sandbox: true,
     });
   });
 
@@ -34,6 +35,7 @@ describe("parseCli", () => {
       "--continue-on-fail",
       "--dry-run",
       "--claude-cmd", "/bin/fake",
+      "--no-sandbox",
     ]);
     expect(opts).toMatchObject({
       base: "dev",
@@ -46,6 +48,7 @@ describe("parseCli", () => {
       dryRun: true,
       claudeCmd: "/bin/fake",
       claudeCmdGiven: true,
+      sandbox: false,
     });
   });
 

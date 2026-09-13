@@ -87,10 +87,11 @@ export function commitAll(worktree, subject) {
   };
 }
 
-// Back to the last commit: tracked changes reverted, untracked files removed.
-// Ignored files (node_modules, build output) are left alone.
+// Back to the last commit: staged and unstaged changes reverted, untracked
+// files removed. Ignored files (node_modules, build output) are left alone.
+// Resets to HEAD, not the index, so anything an attempt staged is undone too.
 export function discardChanges(worktree) {
-  gitOk(worktree, ["checkout", "--", "."]);
+  gitOk(worktree, ["reset", "-q", "--hard", "HEAD"]);
   gitOk(worktree, ["clean", "-fd"]);
 }
 
