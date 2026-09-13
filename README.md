@@ -11,7 +11,8 @@ Node 20, zero runtime dependencies.
 3. **Retries are bounded.** A step gets a fixed number of attempts and each Claude call has a wall-clock timeout. The run stops at the first step that uses up its attempts, because later steps build on earlier ones.
 4. **Only evidence counts.** A step lands when the working tree changed and the gate passed. What Claude says it did is saved but never used to decide anything, and the files listed in the report come from git.
 5. **Scope is declared and checked.** A step can list the paths it may change. Touching anything else fails the attempt before the gate even runs, which catches an agent working around a deny rule with the shell.
-6. **Every run leaves a handoff.** `report.md` says what landed, what failed and why, what it cost, and gives the exact commands to review, take, or discard the branch.
+6. **Every change must be reviewable.** A change git cannot show as a text diff does not land. If a changed source or text file holds a raw control character (anything below 0x20 except newline, carriage return, and tab), or git would call a text-extension file binary, the attempt fails before the gate runs, and the next attempt is told which file and line.
+7. **Every run leaves a handoff.** `report.md` says what landed, what failed and why, what it cost, and gives the exact commands to review, take, or discard the branch.
 
 ## Command line
 
@@ -36,6 +37,8 @@ node bin/loop.mjs clean --target <abs path> [--base <branch>]
 `npm link` in this folder puts `build-loop` on your PATH.
 
 It refuses to start, with a one-line reason and exit code 2, when the target has uncommitted changes, the base branch does not exist, `package.json` on the base branch has no `check` script, `claude --version` fails (unless `--claude-cmd` is given), or the steps file has no steps.
+
+`--base` can be another run's `loop/<run-id>` branch, to stack a follow-up on work you have not taken yet. The new branch then carries both runs' commits; the report says so and shows how to see everything a merge would bring in.
 
 `clean` removes loop worktrees whose branch is merged into the base branch or has been deleted. It keeps branches, run logs, and reports, and prints the command to delete a merged branch.
 
@@ -77,7 +80,7 @@ ALLOWED: app/api/interview-drill/log/route.js, tests/unit/interview-drill-*.test
 
 ## What Claude is given
 
-The prompt for an attempt is `src/preamble.md` (edit it freely, it is read at run time), then the shared context, the step, `DONE WHEN`, and the allowed paths. From the second attempt on it also gets the last 60 lines of the failed gate log, or the list of out-of-scope files, or a note that the last attempt changed nothing or timed out. The previous attempt's changes stay in the tree.
+The prompt for an attempt is `src/preamble.md` (edit it freely, it is read at run time), then the shared context, the step, `DONE WHEN`, and the allowed paths. From the second attempt on it also gets the last 60 lines of the failed gate log, or the list of out-of-scope or unreviewable files, or a note that the last attempt changed nothing or timed out. The previous attempt's changes stay in the tree.
 
 Claude runs in the worktree, so the target's `CLAUDE.md` and `.claude/settings.json` deny list apply. It runs with `--permission-mode dontAsk` and a fixed allow list: file reading and editing tools, `npm run check`, `npm test`, `npx vitest`, `npx eslint`, and read-only `git diff`, `git status`, `git log`, `ls`, and `cat`. Anything else is denied without prompting. `LEARNING_LOOP=0` is set so a target's opt-in Stop hook does not run the gate a second time.
 
@@ -86,9 +89,9 @@ Claude runs in the worktree, so the target's `CLAUDE.md` and `.claude/settings.j
 The runner prints one timestamped line per event, then the report path and the branch name as the last two lines. The report has:
 
 - the outcome (`all steps landed`, `stopped`, `finished with failures`, `refused` for a red baseline, `dry run`, `interrupted`, or `error`), the base commit, branch, worktree, model, times, and total cost;
-- one row per step: `landed`, `failed`, or `skipped`, attempts used, the failure reason (`gate`, `scope: <paths>`, `no changes`, `timeout`), the commit, and the files changed with line counts;
+- one row per step: `landed`, `failed`, or `skipped`, attempts used, turns and cost summed across attempts (a dash when the CLI did not report them), the failure reason (`gate`, `scope: <paths>`, `unreviewable: <file and line>`, `no changes`, `timeout`), the commit, and the files changed with line counts;
 - the last 40 lines of the gate log for a failed step, or of the baseline or install log if the run never started;
-- **Review it**, **Take it**, and **Discard it** commands.
+- **Review it**, **Take it**, and **Discard it** commands. **Take it** is worked out from the target's checked-out branch when the report is written: `git merge --ff-only` if that branch can fast-forward to the run's branch, a plain `git merge` if it has moved on since.
 
 Read the report, then the diff, then decide. Per-attempt prompts, Claude JSON output, stderr, and gate logs are next to the report in the run folder. If a step failed, fix the steps file and run again rather than changing the runner.
 
@@ -99,6 +102,7 @@ Read the report, then the diff, then decide. Per-attempt prompts, Claude JSON ou
 - Touch your checkout, its branch, or its uncommitted work.
 - Copy gitignored files such as `.env.local` into the worktree.
 - Start from a red baseline, since it could not tell its failures from inherited ones.
+- Land a change git cannot show as a text diff.
 - Use `--dangerously-skip-permissions`.
 
 ## Development
@@ -107,4 +111,4 @@ Read the report, then the diff, then decide. Per-attempt prompts, Claude JSON ou
 npm test
 ```
 
-Unit tests cover argument parsing, steps-file parsing, glob matching, prompt assembly, output parsing, and report rendering. Integration tests run `bin/loop.mjs` end to end against throwaway git repos with `tests/fake-claude.mjs` in place of the Claude CLI. The real `claude` is never run by the tests.
+Unit tests cover argument parsing, steps-file parsing, glob matching, prompt assembly, the control-character scan, output parsing, and report rendering. Integration tests run `bin/loop.mjs` end to end against throwaway git repos with `tests/fake-claude.mjs` in place of the Claude CLI. The real `claude` is never run by the tests.
