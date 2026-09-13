@@ -10,7 +10,7 @@ Node 20, zero runtime dependencies.
 2. **Every run is isolated.** Each run gets its own worktree and `loop/<run-id>` branch cut from the base commit, and the runner never touches your checkout or copies gitignored files such as `.env.local`. Code the agent writes also runs: its tests run when Claude calls `npm test` and when the gate runs, and with `--base` on a loop branch its install scripts run too. On macOS all of that runs inside a sandbox that limits writes to the worktree and a few named folders, keeps the target checkout and listed secret files unreadable, and gets an allowlisted environment instead of yours. The sandbox has limits; read [Sandbox](#sandbox) before relying on it.
 3. **Retries are bounded.** A step gets a fixed number of attempts. Each Claude call, the install, and each gate run have a wall-clock limit. The run stops at the first step that uses up its attempts, because later steps build on earlier ones.
 4. **Only evidence counts.** A step lands when the working tree changed and the gate passed. What Claude says it did is saved but never used to decide anything, and the files listed in the report come from git.
-5. **Scope is declared and checked.** A step can list the paths it may change. A tracked or untracked (not ignored) file outside them fails the attempt, checked before the gate and again after it. Ignored files are not checked; instead, those outside `node_modules` are deleted before every gate. The commit runs with git hooks disabled and only if the staged files are exactly the ones that passed.
+5. **Scope is declared and checked.** A step can list the paths it may change. A tracked or untracked (not ignored) file outside them fails the attempt, checked before the gate and again after it. Ignored files are not checked; instead, those outside `node_modules` are deleted before every gate, including the baseline gate. A step whose `ALLOWED:` line lists no paths is refused before the run starts. The commit runs with git hooks disabled and only if the staged files are exactly the ones that passed.
 6. **Changes must be reviewable.** A changed file with a raw control character (anything below 0x20 except newline, carriage return, and tab) fails the attempt, and so does a file git calls binary, unless it has a known binary extension such as `.png`, `.pdf`, or `.woff2`. The next attempt is told which file and line.
 7. **Every run leaves a handoff.** `report.md` says what landed, what failed and why, what it cost, and gives the commands to review (against the exact base commit the run started from), take, or discard the branch.
 
@@ -45,7 +45,7 @@ It refuses to start, with a one-line reason and exit code 2, when the target has
 
 `--base` can be another run's `loop/<run-id>` branch, to stack a follow-up on work you have not taken yet. The new branch then carries both runs' commits; the report says so and shows how to see everything a merge would bring in.
 
-`clean` removes loop worktrees whose branch is merged into the base branch or has been deleted. It keeps branches, run logs, and reports, and prints the command to delete a merged branch.
+`clean` removes loop worktrees whose branch is merged into the base branch or has been deleted, except a worktree whose run is still in progress (its state says running and its recorded process is alive, or it came from another machine) and a worktree with uncommitted changes. It keeps branches, run logs, and reports, and prints the command to delete a merged branch.
 
 State lives under `~/.build-loop/` (override with `BUILD_LOOP_HOME`):
 
@@ -113,7 +113,7 @@ The prompt for an attempt is `src/preamble.md` (edit it freely, it is read at ru
 
 Claude runs in the worktree, so the target's `CLAUDE.md` and `.claude/settings.json` deny list apply. It runs with `--permission-mode dontAsk` and a fixed allow list: file reading and editing tools, `npm run check`, `npm test`, `npx vitest`, `npx eslint`, and read-only `git diff`, `git status`, `git log`, `ls`, and `cat`. Anything else is denied without prompting. `LEARNING_LOOP=0` is set so a target's opt-in Stop hook does not run the gate a second time.
 
-Claude, the gate, and the install get only these environment variables: `HOME`, `USER`, `LOGNAME`, `PATH`, `SHELL`, `TMPDIR`, `TERM`, `LANG`, `LC_*`, `TZ`, and `CLAUDE_CONFIG_DIR`, plus `npm_config_cache` pointing at `~/.build-loop/npm-cache`. API keys and tokens in your shell do not reach them. To pass one on purpose (for example an API key when the Claude CLI is not signed in through the Keychain), list it in `BUILD_LOOP_PASS_ENV=NAME1,NAME2`.
+Claude, the gate, and the install get only these environment variables from your shell: `HOME`, `USER`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `LANG`, `LC_*`, `TZ`, and `CLAUDE_CONFIG_DIR`. The runner adds four of its own: `TMPDIR` (the run's temp folder, `~/.build-loop/tmp/<run-id>`), `npm_config_cache` (`~/.build-loop/npm-cache`), `BUILD_LOOP_PROC` (a per-call marker used to find leftover processes), and, for Claude only, `LEARNING_LOOP=0`. API keys and tokens in your shell do not reach them. To pass one on purpose (for example an API key when the Claude CLI is not signed in through the Keychain), list it in `BUILD_LOOP_PASS_ENV=NAME1,NAME2`.
 
 The allow list decides which tools Claude may call. It does not limit what those tools run: `npm test` and `npm run check` execute whatever tests Claude wrote. That is what the sandbox is for.
 
@@ -123,14 +123,14 @@ On macOS, the install command, the Claude session, and every gate run go through
 
 | | Allowed | Denied |
 | --- | --- | --- |
-| Writes | `/dev`, temp folders, and the worktree. The install also gets the worktree's `node_modules` and `~/.build-loop/npm-cache`; the gate and Claude get only that cache's `_logs` and, inside `node_modules`, the `.vite`, `.vite-temp`, and `.cache` folders test tools write. The Claude session also gets `~/.claude` and `~/Library/Caches/claude-cli-nodejs`. | Everything else, by default. That includes the rest of your home folder, `/Users/Shared`, other volumes, the target checkout and its `.git`, the worktree's `.git` pointer file, your own `~/.npm`, and, for Claude, `~/.claude.json`, `~/.claude` settings, hooks, agents, skills, commands, plugins, keybindings, and memory. |
+| Writes | `/dev`, the run's temp folder (`~/.build-loop/tmp/<run-id>`, removed when the run ends), the macOS per-user temp and cache folders under `/private/var/folders` (read from `getconf` and accepted only in that exact shape, never from `TMPDIR`), and the worktree. The install also gets the worktree's `node_modules` and `~/.build-loop/npm-cache`; the gate and Claude get only that cache's `_logs` and, inside `node_modules`, the `.vite`, `.vite-temp`, and `.cache` folders test tools write. The Claude session also gets `~/.claude` and `~/Library/Caches/claude-cli-nodejs`. | Everything else, by default. That includes the rest of your home folder, `/tmp`, `/Users/Shared`, other volumes, the target checkout and its `.git`, the worktree's `.git` pointer file, your own `~/.npm`, and, for Claude, `~/.claude.json`, `~/.claude` settings, hooks, agents, skills, commands, plugins, keybindings, and memory. |
 | Reads | The worktree, the target's `.git` (git needs it), and everything not listed as denied. | `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker`, `~/.kube`, `~/.netrc`, `~/.npmrc`, `~/.git-credentials`, any `.env*` file outside the worktree, and the target checkout's files. |
 
 Around the sandbox:
 
 - Children get the allowlisted environment above, not the runner's.
 - git commands the runner runs itself (add, commit, reset, clean, worktree add) run outside the sandbox with hooks disabled.
-- After every install, Claude call, and gate run, the runner kills its process group and any process still carrying that call's `BUILD_LOOP_PROC` marker.
+- After every install, Claude call, and gate run, and when the runner is interrupted, it kills that call's process group. On macOS it also kills any process still carrying the call's `BUILD_LOOP_PROC` marker (found with `ps -E`); elsewhere only the process group is killed.
 - A run refuses to start if `sandbox-exec` is missing (for example on Linux) unless you pass `--no-sandbox`; the report flags a run made that way.
 
 What the sandbox does not cover:
@@ -147,7 +147,7 @@ What the sandbox does not cover:
 
 The runner prints one timestamped line per event, then the report path and the branch name as the last two lines. The report has:
 
-- the outcome (`all steps landed`, `stopped`, `finished with failures`, `refused` for a red or file-changing baseline or install, `dry run`, `interrupted`, or `error`), the base commit, branch, worktree, model, times, and total cost;
+- the outcome: `all steps landed`, `stopped`, `finished with failures`, `failed` (the install command exited non-zero or timed out), `refused` (the baseline gate was red or timed out, or install or the baseline changed files in the worktree), `dry run`, `interrupted`, or `error`; plus the base commit, branch, worktree, model, times, and total cost;
 - one row per step: `landed`, `failed`, or `skipped`, attempts used, turns and cost summed across attempts (a dash when the CLI did not report them), the failure reason (`gate`, `gate timeout`, `scope: <paths>`, `unreviewable: <file and line>`, `no changes`, `timeout`), the commit, and the files changed with line counts;
 - the last 40 lines of the gate log for a failed step, or of the baseline or install log if the run never started;
 - **Review it**, **Take it**, and **Discard it** commands. **Take it** is worked out from the target's checked-out branch when the report is written: `git merge --ff-only` if that branch can fast-forward to the run's branch, a plain `git merge` if it has moved on since.
