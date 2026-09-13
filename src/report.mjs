@@ -11,6 +11,13 @@
 
 export const GATE_TAIL_LINES = 40;
 
+// Quote a value for a POSIX shell so a pasted command works with spaces and
+// never expands $(...) or backticks. Plain paths and refs are left as they are.
+export function shq(value) {
+  const s = String(value);
+  return /^[A-Za-z0-9_\/.:@%+=,-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`;
+}
+
 function money(n, missing = "n/a") {
   return typeof n === "number" ? `$${n.toFixed(2)}` : missing;
 }
@@ -41,19 +48,19 @@ function takeBlock(state) {
   }
   const { checkout, canFastForward } = state.take ?? {};
   if (checkout && isLoopBranch(state.base)) {
-    lines.push("Everything taking it brings in:", "", "```", `git -C ${t} log --oneline ${checkout}..${state.branch}`, "```", "");
+    lines.push("Everything taking it brings in:", "", "```", `git -C ${shq(t)} log --oneline ${shq(`${checkout}..${state.branch}`)}`, "```", "");
   }
   if (checkout && canFastForward === true) {
     lines.push(`When this report was written, the target's checkout (\`${checkout}\`) could fast-forward to this branch:`);
-    lines.push("", "```", `git -C ${t} merge --ff-only ${state.branch}`, "```", "");
+    lines.push("", "```", `git -C ${shq(t)} merge --ff-only ${shq(state.branch)}`, "```", "");
   } else if (checkout && canFastForward === false) {
     lines.push(
       `When this report was written, the target's checkout (\`${checkout}\`) had commits this branch does not, so a fast-forward will not work. Merge it:`
     );
-    lines.push("", "```", `git -C ${t} merge ${state.branch}`, "```", "");
+    lines.push("", "```", `git -C ${shq(t)} merge ${shq(state.branch)}`, "```", "");
   } else {
     lines.push(`Only works if the target's checkout is on \`${state.base}\` and \`${state.base}\` has not moved past the branch point.`);
-    lines.push("", "```", `git -C ${t} merge --ff-only ${state.branch}`, "```", "");
+    lines.push("", "```", `git -C ${shq(t)} merge --ff-only ${shq(state.branch)}`, "```", "");
   }
   return lines;
 }
@@ -116,15 +123,15 @@ export function renderReport(state) {
     "## Review it",
     "",
     "```",
-    `git -C ${t} log --oneline ${state.base}..${state.branch}`,
-    `git -C ${t} diff ${state.base}..${state.branch}`,
+    `git -C ${shq(t)} log --oneline ${shq(`${state.base}..${state.branch}`)}`,
+    `git -C ${shq(t)} diff ${shq(`${state.base}..${state.branch}`)}`,
     "```",
     "",
     ...takeBlock(state),
     "## Discard it",
     "",
     "```",
-    `git -C ${t} worktree remove ${state.worktree} && git -C ${t} branch -D ${state.branch}`,
+    `git -C ${shq(t)} worktree remove ${shq(state.worktree)} && git -C ${shq(t)} branch -D ${shq(state.branch)}`,
     "```",
     ""
   );

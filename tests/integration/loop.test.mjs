@@ -45,7 +45,15 @@ function makeTarget({ status = "green" } = {}) {
   fs.writeFileSync(
     path.join(repo, "check.mjs"),
     `import fs from "node:fs";
-if (fs.readFileSync("status.txt", "utf8").includes("red")) {
+const status = fs.readFileSync("status.txt", "utf8");
+// "spill" makes the gate itself write files, to test checks that run after it.
+if (status.includes("spill-control")) {
+  fs.mkdirSync("notes", { recursive: true });
+  fs.writeFileSync("notes/out.md", "color \\u001b[0m\\n");
+} else if (status.includes("spill")) {
+  fs.writeFileSync("gate-output.txt", "made by the gate\\n");
+}
+if (status.includes("red")) {
   console.log("CHECK SAYS RED MARKER");
   process.exit(1);
 }
@@ -285,6 +293,29 @@ describe("build-loop against a throwaway repo", () => {
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
+  it("fails an attempt whose gate writes a file outside ALLOWED, instead of committing it", () => {
+    const target = makeTarget();
+    const r = runLoop(target, writeSteps(stepsGreen), {
+      plan: [{ do: "write", path: "status.txt", content: "green spill\n" }],
+      extra: ["--attempts", "1"],
+    });
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain("out of scope after the gate: gate-output.txt");
+    expect(r.report).toMatch(/\| failed \| 1 \|.*scope: gate-output.txt/);
+    expect(sh(target, "git", ["rev-list", "--count", `main..${r.branch}`])).toBe("0");
+  });
+
+  it("fails an attempt whose gate writes an unreadable file inside ALLOWED", () => {
+    const target = makeTarget();
+    const r = runLoop(target, writeSteps(stepsGreen), {
+      plan: [{ do: "write", path: "status.txt", content: "green spill-control\n" }],
+      extra: ["--attempts", "1"],
+    });
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain("unreviewable after the gate: notes/out.md line 1 (0x1b)");
+    expect(sh(target, "git", ["rev-list", "--count", `main..${r.branch}`])).toBe("0");
+  });
+
   it("kills background children a Claude process leaves behind", () => {
     const target = makeTarget();
     const r = runLoop(target, writeSteps(stepsGreen), {
@@ -458,6 +489,36 @@ ALLOWED: three.txt
     // Indexed from another machine, the decision is not guessed.
     index = runs("somewhere-else");
     expect(index.byRun[id(kept)]).toMatchObject({ decision: "unknown", decidedOn: "somewhere-else" });
+  });
+
+  it("clean keeps a run that is still in progress and a worktree with uncommitted changes", async () => {
+    const target = makeTarget();
+    const home = path.join(tmp, "state");
+    const fakeState = path.join(tmp, "fake-live");
+    fs.mkdirSync(fakeState, { recursive: true });
+    const { spawn } = await import("node:child_process");
+    const live = spawn("node", [BIN, "--target", target, "--steps", writeSteps(stepsGreen), "--install", "true", "--claude-cmd", FAKE, "--attempts", "1", "--timeout", "0.1"], {
+      env: { ...process.env, BUILD_LOOP_HOME: home, BUILD_LOOP_MACHINE: "test-machine", FAKE_CLAUDE_STATE: fakeState, FAKE_CLAUDE_PLAN: JSON.stringify([{ do: "sleep", ms: 60000 }]) },
+      stdio: "ignore",
+    });
+    const cleanNow = () =>
+      spawnSync("node", [BIN, "clean", "--target", target], { encoding: "utf8", env: { ...process.env, BUILD_LOOP_HOME: home, BUILD_LOOP_MACHINE: "test-machine" } });
+
+    // Wait until the run is inside its Claude call, with its branch still at the base.
+    for (let i = 0; i < 100 && !fs.existsSync(path.join(fakeState, "calls")); i++) await new Promise((r) => setTimeout(r, 100));
+    const worktree = fs.readdirSync(path.join(home, "worktrees", "target-app")).map((d) => path.join(home, "worktrees", "target-app", d))[0];
+    let cleaned = cleanNow();
+    expect(cleaned.stdout).toContain(`kept     ${worktree} (run in progress, pid `);
+    expect(fs.existsSync(worktree)).toBe(true);
+
+    await new Promise((resolve) => live.on("exit", resolve));
+    fs.writeFileSync(path.join(worktree, "scratch.txt"), "mine\n");
+    cleaned = cleanNow();
+    expect(cleaned.stdout).toContain(`kept     ${worktree} (uncommitted changes in the worktree)`);
+
+    fs.rmSync(path.join(worktree, "scratch.txt"));
+    cleaned = cleanNow();
+    expect(cleaned.stdout).toContain(`removed  ${worktree}`);
   });
 
   it("dry-runs without calling Claude, then clean removes the merged worktree and keeps unmerged ones", () => {

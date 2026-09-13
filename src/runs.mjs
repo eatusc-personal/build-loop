@@ -111,7 +111,7 @@ export function readRuns(root) {
       try {
         rows.push(summarizeRun(JSON.parse(fs.readFileSync(stateFile, "utf8")), { runDir }));
       } catch {
-        rows.push({ key: `unreadable/${target}/${id}`, runId: id, targetName: target, outcome: "unreadable state.json", runDir, steps: [] });
+        rows.push({ key: `unreadable/${target}/${id}`, runId: id, targetName: target, outcome: "unreadable state.json", unreadable: true, runDir, steps: [] });
       }
     }
   }
@@ -141,13 +141,17 @@ export function buildIndex({ into = "main", env = process.env, now = () => new D
   const thisMachine = currentMachine(env).name;
   const indexedAt = now().toISOString();
   const rows = readRuns(root).map((row) => {
-    const { decision, detail } = row.steps ? decide(row, { thisMachine, ...gitFacts(row, into) }, into) : { decision: "unknown", detail: "" };
+    const { decision, detail } = row.unreadable
+      ? { decision: "unknown", detail: "state.json could not be read" }
+      : decide(row, { thisMachine, ...gitFacts(row, into) }, into);
     return { ...row, decision, decisionDetail: detail, decisionInto: into, decidedOn: thisMachine, indexedAt };
   });
 
   fs.mkdirSync(root, { recursive: true });
   const indexFile = path.join(root, "runs.jsonl");
-  const tmp = `${indexFile}.tmp`;
+  // A unique temp name per process, so two rebuilds at once cannot write into
+  // or rename each other's file.
+  const tmp = `${indexFile}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   fs.writeFileSync(tmp, rows.map((r) => JSON.stringify(r)).join("\n") + (rows.length ? "\n" : ""));
   fs.renameSync(tmp, indexFile);
   return { rows, indexFile, thisMachine };

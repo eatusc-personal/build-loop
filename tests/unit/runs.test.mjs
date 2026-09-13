@@ -1,6 +1,10 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { isLiveRun } from "../../src/clean.mjs";
 import { parseCli } from "../../src/args.mjs";
-import { decide, lastLandedCommit, renderRunsTable, summarizeRun } from "../../src/runs.mjs";
+import { buildIndex, decide, lastLandedCommit, renderRunsTable, summarizeRun } from "../../src/runs.mjs";
 
 const state = {
   schemaVersion: 2,
@@ -97,6 +101,35 @@ describe("decide", () => {
 
   it("flags a run that never wrote an outcome", () => {
     expect(decide({ ...row, outcome: "running" }, facts, "main").decision).toBe("unfinished");
+  });
+});
+
+describe("unreadable runs and the index file", () => {
+  it("marks an unreadable state.json unknown, not nothing to take, and leaves no temp files", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "runs-index-"));
+    const runDir = path.join(home, "runs", "app", "20260913-100000");
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, "state.json"), '{"steps": [{"status": "landed", "commit": "ab');
+    const { rows, indexFile } = buildIndex({ env: { BUILD_LOOP_HOME: home, BUILD_LOOP_MACHINE: "laptop" } });
+    expect(rows[0]).toMatchObject({ decision: "unknown", decisionDetail: "state.json could not be read" });
+    expect(fs.readdirSync(home).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+    expect(fs.readFileSync(indexFile, "utf8").trim().split("\n")).toHaveLength(1);
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+});
+
+describe("isLiveRun", () => {
+  const alive = () => true;
+  const dead = () => false;
+  it("is live only while the recorded process on this machine still exists", () => {
+    expect(isLiveRun({ outcome: "running", pid: 1, machine: { name: "laptop" } }, { thisMachine: "laptop", pidAlive: alive })).toBe(true);
+    expect(isLiveRun({ outcome: "running", pid: 1, machine: { name: "laptop" } }, { thisMachine: "laptop", pidAlive: dead })).toBe(false);
+    expect(isLiveRun({ outcome: "stopped", pid: 1 }, { thisMachine: "laptop", pidAlive: alive })).toBe(false);
+    expect(isLiveRun(null, { thisMachine: "laptop", pidAlive: alive })).toBe(false);
+  });
+  it("assumes live when it cannot check", () => {
+    expect(isLiveRun({ outcome: "running", machine: { name: "studio" }, pid: 1 }, { thisMachine: "laptop", pidAlive: dead })).toBe(true);
+    expect(isLiveRun({ outcome: "running" }, { thisMachine: "laptop", pidAlive: dead })).toBe(true);
   });
 });
 

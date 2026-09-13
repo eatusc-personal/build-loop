@@ -64,6 +64,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
   const state = {
     ...collectProvenance({ opts, env, stepsText, claudeVersion: claudeVer }),
     runId: id,
+    pid: process.pid,
     target: opts.target,
     base: opts.base,
     baseCommit: git.revParse(opts.target, opts.base),
@@ -224,7 +225,18 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
           } else {
             event("gate started");
             const gate = await runGate(paths.worktree, file(`${stem}.gate.log`));
-            if (gate.ok) {
+            // The gate runs code the attempt wrote, and that code can change files
+            // too. Check scope and readability again on what will actually be committed.
+            const afterGate = gate.ok ? git.changedPaths(paths.worktree) : [];
+            const outsideAfter = gate.ok ? outOfScope(afterGate, step.allowed) : [];
+            const unreviewableAfter = gate.ok && !outsideAfter.length ? checkReviewable(paths.worktree, afterGate) : [];
+            if (gate.ok && outsideAfter.length) {
+              failure = { reason: "scope", paths: outsideAfter };
+              event(`step ${step.index} attempt ${attempt} out of scope after the gate: ${outsideAfter.join(", ")}`);
+            } else if (gate.ok && unreviewableAfter.length) {
+              failure = { reason: "unreviewable", paths: unreviewableAfter };
+              event(`step ${step.index} attempt ${attempt} unreviewable after the gate: ${unreviewableAfter.join("; ")}`);
+            } else if (gate.ok) {
               const { hash, files } = git.commitAll(paths.worktree, `loop: ${step.heading}`);
               Object.assign(s, { status: "landed", reason: null, commit: hash, files });
               event(`landed ${hash.slice(0, 7)}`);

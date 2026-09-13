@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runId, runPaths } from "../../src/paths.mjs";
-import { renderReport, totalCost } from "../../src/report.mjs";
+import { renderReport, shq, totalCost } from "../../src/report.mjs";
 
 const state = {
   target: "/Users/me/app",
@@ -115,6 +115,30 @@ describe("renderReport", () => {
     expect(dry).toContain("| Total cost | n/a |");
     expect(dry).toContain("(0 landed, 0 failed, 3 skipped, 3 total)");
     expect(dry).not.toContain("\u2014");
+  });
+});
+
+describe("shell quoting in handoff commands", () => {
+  it("leaves plain paths alone and quotes anything a shell would reinterpret", () => {
+    expect(shq("/Users/me/app")).toBe("/Users/me/app");
+    expect(shq("main..loop/20260913-090000")).toBe("main..loop/20260913-090000");
+    expect(shq("/Users/me/my app")).toBe("'/Users/me/my app'");
+    expect(shq("/x/$(touch pwn)")).toBe("'/x/$(touch pwn)'");
+    expect(shq("/x/`id`")).toBe("'/x/`id`'");
+    expect(shq("it's")).toBe("'it'\\''s'");
+  });
+
+  it("quotes the target and worktree in every command", () => {
+    const md = renderReport({
+      ...state,
+      target: "/Users/me/My Apps/$(touch pwn)",
+      worktree: "/Users/me/.build-loop/worktrees/My Apps/1",
+      take: { checkout: "main", canFastForward: false },
+    });
+    expect(md).toContain("git -C '/Users/me/My Apps/$(touch pwn)' diff main..loop/20260912-213000");
+    expect(md).toContain("git -C '/Users/me/My Apps/$(touch pwn)' merge loop/20260912-213000");
+    expect(md).toContain("worktree remove '/Users/me/.build-loop/worktrees/My Apps/1' && git -C '/Users/me/My Apps/$(touch pwn)' branch -D loop/20260912-213000");
+    expect(md).not.toMatch(/git -C \/Users\/me\/My Apps/);
   });
 });
 
