@@ -69,8 +69,9 @@ describe("renderReport", () => {
   });
 
   it("gives review, take, and discard commands", () => {
-    expect(md).toContain("git -C /Users/me/app log --oneline main..loop/20260912-213000");
-    expect(md).toContain("git -C /Users/me/app diff main..loop/20260912-213000");
+    expect(md).toContain("git -C /Users/me/app log --oneline 8b9d3201234567890..loop/20260912-213000");
+    expect(md).toContain("git -C /Users/me/app diff 8b9d3201234567890..loop/20260912-213000");
+    expect(md).toContain("From the commit the run started on (`main` at `8b9d32012345`)");
     expect(md).toContain("git -C /Users/me/app merge --ff-only loop/20260912-213000");
     expect(md).toContain("Only works if the target's checkout is on `main`");
     expect(md).toContain(
@@ -99,7 +100,7 @@ describe("renderReport", () => {
     expect(stacked).toContain("| Base | `loop/20260912-200000` at");
     expect(stacked).toContain("This branch is built on `loop/20260912-200000`, so taking it also takes that run's commits.");
     expect(stacked).toContain("git -C /Users/me/app log --oneline main..loop/20260912-213000");
-    expect(stacked).toContain("git -C /Users/me/app diff loop/20260912-200000..loop/20260912-213000");
+    expect(stacked).toContain("git -C /Users/me/app diff 8b9d3201234567890..loop/20260912-213000");
     expect(renderReport(state)).not.toContain("This branch is built on");
   });
 
@@ -135,7 +136,7 @@ describe("shell quoting in handoff commands", () => {
       worktree: "/Users/me/.build-loop/worktrees/My Apps/1",
       take: { checkout: "main", canFastForward: false },
     });
-    expect(md).toContain("git -C '/Users/me/My Apps/$(touch pwn)' diff main..loop/20260912-213000");
+    expect(md).toContain("git -C '/Users/me/My Apps/$(touch pwn)' diff 8b9d3201234567890..loop/20260912-213000");
     expect(md).toContain("git -C '/Users/me/My Apps/$(touch pwn)' merge loop/20260912-213000");
     expect(md).toContain("worktree remove '/Users/me/.build-loop/worktrees/My Apps/1' && git -C '/Users/me/My Apps/$(touch pwn)' branch -D loop/20260912-213000");
     expect(md).not.toMatch(/git -C \/Users\/me\/My Apps/);

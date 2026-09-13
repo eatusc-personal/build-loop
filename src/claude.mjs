@@ -79,13 +79,13 @@ export function claudeVersion(cmd = "claude") {
   return r.code === 0 ? r.stdout.trim() || "unknown" : null;
 }
 
-export async function runClaude({ cmd, prompt, model, maxTurns, cwd, timeoutMs, stdoutFile, stderrFile, profileFile = null }) {
+export async function runClaude({ cmd, prompt, model, maxTurns, cwd, timeoutMs, stdoutFile, stderrFile, profileFile = null, env: baseEnv, marker = null }) {
   // LEARNING_LOOP=0 keeps a target's opt-in Stop hook from running the gate a
   // second time; the runner is the gate here.
-  const env = { ...process.env, LEARNING_LOOP: "0" };
+  const env = { ...baseEnv, LEARNING_LOOP: "0" };
   const args = buildClaudeArgs({ prompt, model, maxTurns });
   // The allowlist limits which tools Claude may call, but allowed commands such
   // as npm test run code Claude wrote. The sandbox limits what that code can do.
   const call = profileFile ? wrap(profileFile, cmd, args) : { cmd, args };
-  return runToFiles(call.cmd, call.args, { cwd, env, stdoutFile, stderrFile, timeoutMs });
+  return runToFiles(call.cmd, call.args, { cwd, env, stdoutFile, stderrFile, timeoutMs, marker });
 }

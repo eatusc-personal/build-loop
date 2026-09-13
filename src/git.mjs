@@ -71,28 +71,51 @@ export const showFile = (dir, ref, file) => {
 };
 
 export function worktreeAdd(target, branch, worktreePath, base) {
-  gitOk(target, ["worktree", "add", "-b", branch, worktreePath, base]);
+  gitOk(target, [...NO_HOOKS, "worktree", "add", "-b", branch, worktreePath, base]);
 }
 
 export function changedPaths(worktree) {
   return parseStatusZ(gitOk(worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]));
 }
 
-export function commitAll(worktree, subject) {
-  gitOk(worktree, ["add", "-A"]);
-  gitOk(worktree, ["commit", "-q", "-m", subject]);
+// Git hooks are code in the repository and run outside the sandbox, so every
+// git command that could fire one runs with hooks disabled.
+const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"];
+
+// Stage and commit, but only if exactly the checked paths are staged. Returns
+// { mismatch } without committing when anything else ended up in the index.
+export function commitAll(worktree, subject, expectedPaths) {
+  gitOk(worktree, [...NO_HOOKS, "add", "-A"]);
+  if (expectedPaths) {
+    const staged = gitOk(worktree, ["diff", "--cached", "--name-only", "--no-renames", "-z"]).split("\0").filter(Boolean);
+    const expected = new Set(expectedPaths);
+    const extra = staged.filter((p) => !expected.has(p));
+    const missing = expectedPaths.filter((p) => !staged.includes(p));
+    if (extra.length || missing.length) {
+      gitOk(worktree, ["reset", "-q"]);
+      return { mismatch: [...extra, ...missing] };
+    }
+  }
+  gitOk(worktree, [...NO_HOOKS, "commit", "--no-verify", "-q", "-m", subject]);
   return {
     hash: revParse(worktree, "HEAD"),
     files: parseNumstat(gitOk(worktree, ["diff", "--numstat", "HEAD~1", "HEAD"])),
   };
 }
 
+// Remove ignored files except installed dependencies (.next, test caches, and
+// anything else an attempt could leave to influence the gate).
+export function cleanIgnored(worktree) {
+  gitOk(worktree, [...NO_HOOKS, "clean", "-fdX", "-e", "!node_modules"]);
+}
+
 // Back to the last commit: staged and unstaged changes reverted, untracked
 // files removed. Ignored files (node_modules, build output) are left alone.
 // Resets to HEAD, not the index, so anything an attempt staged is undone too.
 export function discardChanges(worktree) {
-  gitOk(worktree, ["reset", "-q", "--hard", "HEAD"]);
-  gitOk(worktree, ["clean", "-fd"]);
+  gitOk(worktree, [...NO_HOOKS, "reset", "-q", "--hard", "HEAD"]);
+  gitOk(worktree, [...NO_HOOKS, "clean", "-fd"]);
+  cleanIgnored(worktree);
 }
 
 // Git's binary verdict on a file's current content, by diffing it against an

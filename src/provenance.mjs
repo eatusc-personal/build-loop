@@ -48,7 +48,8 @@ export function currentMachine(env = process.env) {
 export function runnerVersion(root = RUNNER_ROOT) {
   const head = run("git", ["-C", root, "rev-parse", "HEAD"]);
   if (head.code !== 0) return { commit: null, dirty: null };
-  const status = run("git", ["-C", root, "status", "--porcelain", "--untracked-files=no"]);
+  // Untracked files count too: a new, uncommitted module changes the runner.
+  const status = run("git", ["-C", root, "status", "--porcelain"]);
   return { commit: head.stdout.trim(), dirty: status.stdout.trim() !== "" };
 }
 

@@ -20,6 +20,8 @@ build-loop runs [--into <branch>]
                          assembled prompt instead
   --claude-cmd <path>    command to run instead of \`claude\`; also read
                          from env BUILD_LOOP_CLAUDE
+  --install-timeout <m>  install time limit, minutes   default: 15
+  --gate-timeout <m>     per gate run, minutes         default: 15
   --no-sandbox           run Claude and the gate without the macOS sandbox
                          (not recommended; see README)`;
 
@@ -37,6 +39,8 @@ const OPTIONS = {
   "claude-cmd": { type: "string" },
   into: { type: "string" },
   "no-sandbox": { type: "boolean" },
+  "install-timeout": { type: "string" },
+  "gate-timeout": { type: "string" },
   help: { type: "boolean", short: "h" },
 };
 
@@ -96,5 +100,7 @@ export function parseCli(argv, env = {}) {
     claudeCmd,
     claudeCmdGiven: claudeCmd !== null,
     sandbox: !values["no-sandbox"],
+    installTimeoutMinutes: values["install-timeout"] === undefined ? 15 : positiveNumber("install-timeout", values["install-timeout"]),
+    gateTimeoutMinutes: values["gate-timeout"] === undefined ? 15 : positiveNumber("gate-timeout", values["gate-timeout"]),
   };
 }

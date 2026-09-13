@@ -46,6 +46,12 @@ function makeTarget({ status = "green" } = {}) {
     path.join(repo, "check.mjs"),
     `import fs from "node:fs";
 const status = fs.readFileSync("status.txt", "utf8");
+console.log("SECRET_TOKEN=" + (process.env.SECRET_TOKEN ?? "absent"));
+// An ignored cache file that short-circuits the gate, to test that ignored files are cleaned first.
+if (fs.existsSync("cache/pass")) {
+  console.log("cache says pass");
+  process.exit(0);
+}
 // "spill" makes the gate itself write files, to test checks that run after it.
 if (status.includes("spill-control")) {
   fs.mkdirSync("notes", { recursive: true });
@@ -61,7 +67,7 @@ console.log("check passed");
 `
   );
   fs.writeFileSync(path.join(repo, "status.txt"), `${status}\n`);
-  fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules\n");
+  fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules\ncache/\n");
   sh(repo, "git", ["add", "-A"]);
   sh(repo, "git", ["commit", "-q", "-m", "init"]);
   return repo;
@@ -86,6 +92,7 @@ function runLoop(target, steps, { plan, extra = [], stateEnv = {} } = {}) {
         ...process.env,
         BUILD_LOOP_HOME: path.join(tmp, "state"),
         BUILD_LOOP_MACHINE: "test-machine",
+        BUILD_LOOP_PASS_ENV: "FAKE_CLAUDE_STATE,FAKE_CLAUDE_PLAN",
         FAKE_CLAUDE_STATE: fakeState,
         FAKE_CLAUDE_PLAN: JSON.stringify(plan ?? [{ do: "nothing" }]),
         ...stateEnv,
@@ -243,6 +250,146 @@ describe("build-loop against a throwaway repo", () => {
       spawnSync("sleep", ["1.1"]);
       runLoop(target, writeSteps(stepsAnyFile), { plan, extra: ["--attempts", "1", "--no-sandbox"] });
       expect(fs.existsSync(escaped)).toBe(true);
+    });
+  });
+
+  describe("second review fixes", () => {
+    const stepsAnyFile = `## Step 1: Anything\n\nDo it.\n`;
+    const worktreeOf = (r) => r.report.match(/\| Worktree \| `([^`]+)` \|/)[1];
+
+    it("refuses to run when install changes files in the worktree", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsGreen), { extra: ["--install", "echo made > generated.txt"] });
+      expect(r.code).toBe(1);
+      expect(r.calls).toBe(0);
+      expect(r.report).toContain("Outcome: **refused**. install changed files in the worktree (generated.txt)");
+    });
+
+    it("refuses to run when the baseline gate changes files in the worktree", () => {
+      const target = makeTarget({ status: "green spill" });
+      const r = runLoop(target, writeSteps(stepsGreen));
+      expect(r.code).toBe(1);
+      expect(r.calls).toBe(0);
+      expect(r.report).toContain("the baseline gate changed files in the worktree (gate-output.txt)");
+    });
+
+    it("stops a hanging gate at its time limit and reports a gate timeout", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsAnyFile), {
+        plan: [{ do: "write", path: "check.mjs", content: "while (true) {}\n" }],
+        extra: ["--attempts", "1", "--gate-timeout", "0.05"],
+      });
+      expect(r.code).toBe(1);
+      expect(r.elapsedMs).toBeLessThan(40000);
+      expect(r.report).toMatch(/\| failed \| 1 \|.*\| gate timeout \|/);
+    });
+
+    it("stops a hanging install at its time limit", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsGreen), { extra: ["--install", "sleep 60", "--install-timeout", "0.03"] });
+      expect(r.code).toBe(1);
+      expect(r.elapsedMs).toBeLessThan(40000);
+      expect(r.report).toContain("install failed: `sleep 60` timed out");
+    });
+
+    it("cleans ignored files before the gate, so a planted cache cannot turn it green", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsGreen), {
+        plan: [{ do: "multi", actions: [{ do: "write", path: "status.txt", content: "red\n" }, { do: "write", path: "cache/pass", content: "yes\n" }] }],
+        extra: ["--attempts", "1"],
+      });
+      expect(r.code).toBe(1);
+      expect(r.report).toMatch(/\| failed \| 1 \|.*\| gate \|/);
+      expect(sh(target, "git", ["rev-list", "--count", `main..${r.branch}`])).toBe("0");
+      expect(fs.existsSync(path.join(worktreeOf(r), "cache"))).toBe(false);
+    });
+
+    it("commits with git hooks disabled, so a hook cannot add files or run outside the sandbox", () => {
+      const target = makeTarget();
+      const escaped = path.join(tmp, "hook-escaped.txt");
+      fs.mkdirSync(path.join(target, ".githooks"));
+      fs.writeFileSync(path.join(target, ".githooks", "pre-commit"), "#!/bin/sh\necho forbidden > forbidden.txt\ngit add forbidden.txt\n");
+      fs.writeFileSync(path.join(target, ".githooks", "post-commit"), `#!/bin/sh\necho out > ${JSON.stringify(escaped)}\n`);
+      fs.chmodSync(path.join(target, ".githooks", "pre-commit"), 0o755);
+      fs.chmodSync(path.join(target, ".githooks", "post-commit"), 0o755);
+      sh(target, "git", ["add", "-A"]);
+      sh(target, "git", ["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "hooks"]);
+      sh(target, "git", ["config", "core.hooksPath", ".githooks"]);
+
+      const r = runLoop(target, writeSteps(stepsGreen), { plan: [{ do: "write", path: "status.txt", content: "green again\n" }] });
+      expect(r.code).toBe(0);
+      expect(sh(target, "git", ["diff", "--name-only", `main..${r.branch}`])).toBe("status.txt");
+      expect(fs.existsSync(escaped)).toBe(false);
+    });
+
+    it("does not pass the runner's environment to Claude or the gate, except names passed on purpose", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsGreen), {
+        plan: [{ do: "write", path: "status.txt", content: "green again\n" }],
+        stateEnv: { SECRET_TOKEN: "hunter2", GITHUB_TOKEN: "ghp-nope" },
+      });
+      expect(r.code).toBe(0);
+      const seen = JSON.parse(fs.readFileSync(path.join(r.fakeState, "env-1.json"), "utf8"));
+      expect(seen.SECRET_TOKEN).toBeNull();
+      expect(seen.keys).not.toContain("GITHUB_TOKEN");
+      expect(fs.readFileSync(path.join(r.runDir, "baseline.gate.log"), "utf8")).toContain("SECRET_TOKEN=absent");
+
+      spawnSync("sleep", ["1.1"]);
+      const passed = runLoop(target, writeSteps(stepsGreen), {
+        plan: [{ do: "write", path: "status.txt", content: "green third\n" }],
+        stateEnv: { SECRET_TOKEN: "hunter2", BUILD_LOOP_PASS_ENV: "FAKE_CLAUDE_STATE,FAKE_CLAUDE_PLAN,SECRET_TOKEN" },
+      });
+      expect(fs.readFileSync(path.join(passed.runDir, "baseline.gate.log"), "utf8")).toContain("SECRET_TOKEN=hunter2");
+    });
+
+    it("runs the install sandboxed, so install scripts cannot write outside the worktree", () => {
+      const target = makeTarget();
+      const escaped = path.join(target, "from-install.txt");
+      const sandboxed = runLoop(target, writeSteps(stepsGreen), { extra: ["--install", `echo out > ${JSON.stringify(escaped)}`] });
+      expect(sandboxed.code).toBe(1);
+      expect(sandboxed.report).toContain("install failed");
+      expect(fs.existsSync(escaped)).toBe(false);
+
+      spawnSync("sleep", ["1.1"]);
+      runLoop(target, writeSteps(stepsGreen), { plan: [{ do: "nothing" }], extra: ["--attempts", "1", "--no-sandbox", "--install", `echo out > ${JSON.stringify(escaped)}`] });
+      expect(fs.existsSync(escaped)).toBe(true);
+    });
+
+    it("denies writes outside the home folder and to ~/.claude.json", () => {
+      const tag = `build-loop-test-${process.pid}-${Date.now()}`;
+      const shared = fs.existsSync("/Users/Shared") ? path.join("/Users/Shared", `${tag}.txt`) : null;
+      const claudeJson = path.join(os.homedir(), `.claude.json.${tag}`);
+      const target = makeTarget();
+      const writes = [{ do: "write", path: claudeJson, content: "{}\n" }];
+      if (shared) writes.unshift({ do: "write", path: shared, content: "x\n" });
+      try {
+        for (const w of writes) {
+          runLoop(target, writeSteps(stepsAnyFile), { plan: [w], extra: ["--attempts", "1"] });
+          expect(fs.existsSync(w.path), w.path).toBe(false);
+          spawnSync("sleep", ["1.1"]);
+        }
+      } finally {
+        for (const w of writes) fs.rmSync(w.path, { force: true });
+      }
+    });
+
+    it("kills a child that detached into its own process group", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsGreen), {
+        plan: [{ do: "orphan", path: "late.md", ms: 2500, detached: true }],
+        extra: ["--attempts", "1"],
+      });
+      const late = fs.readFileSync(path.join(r.fakeState, "orphan-1.txt"), "utf8");
+      spawnSync("sleep", ["3.5"]);
+      expect(fs.existsSync(late)).toBe(false);
+    });
+
+    it("cuts the worktree from the recorded base commit", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsGreen), { plan: [{ do: "write", path: "notes/x.md", content: "x\n" }] });
+      const state = JSON.parse(fs.readFileSync(path.join(r.runDir, "state.json"), "utf8"));
+      expect(sh(target, "git", ["rev-parse", `${r.branch}~1`])).toBe(state.baseCommit);
+      expect(r.report).toContain(`diff ${state.baseCommit}..${r.branch}`);
     });
   });
 
@@ -495,7 +642,7 @@ ALLOWED: three.txt
     expect(sh(target, "git", ["rev-parse", `${second.branch}~1`])).toBe(sh(target, "git", ["rev-parse", first.branch]));
     expect(sh(target, "git", ["rev-list", "--count", `main..${second.branch}`])).toBe("2");
     expect(second.report).toContain(`| Base | \`${first.branch}\` at \`${sh(target, "git", ["rev-parse", first.branch]).slice(0, 12)}\` |`);
-    expect(second.report).toContain(`git -C ${target} diff ${first.branch}..${second.branch}`);
+    expect(second.report).toContain(`git -C ${target} diff ${sh(target, "git", ["rev-parse", first.branch])}..${second.branch}`);
     expect(second.report).toContain(`This branch is built on \`${first.branch}\``);
     expect(second.report).toContain(`git -C ${target} merge --ff-only ${second.branch}`);
 
@@ -566,7 +713,7 @@ ALLOWED: three.txt
     fs.mkdirSync(fakeState, { recursive: true });
     const { spawn } = await import("node:child_process");
     const live = spawn("node", [BIN, "--target", target, "--steps", writeSteps(stepsGreen), "--install", "true", "--claude-cmd", FAKE, "--attempts", "1", "--timeout", "0.1"], {
-      env: { ...process.env, BUILD_LOOP_HOME: home, BUILD_LOOP_MACHINE: "test-machine", FAKE_CLAUDE_STATE: fakeState, FAKE_CLAUDE_PLAN: JSON.stringify([{ do: "sleep", ms: 60000 }]) },
+      env: { ...process.env, BUILD_LOOP_HOME: home, BUILD_LOOP_MACHINE: "test-machine", BUILD_LOOP_PASS_ENV: "FAKE_CLAUDE_STATE,FAKE_CLAUDE_PLAN", FAKE_CLAUDE_STATE: fakeState, FAKE_CLAUDE_PLAN: JSON.stringify([{ do: "sleep", ms: 60000 }]) },
       stdio: "ignore",
     });
     const cleanNow = () =>

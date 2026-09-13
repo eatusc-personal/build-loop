@@ -125,9 +125,11 @@ export function renderReport(state) {
   lines.push(
     "## Review it",
     "",
+    `From the commit the run started on (\`${state.base}\` at \`${String(state.baseCommit ?? "").slice(0, 12)}\`), so a base that moved since does not change the diff:`,
+    "",
     "```",
-    `git -C ${shq(t)} log --oneline ${shq(`${state.base}..${state.branch}`)}`,
-    `git -C ${shq(t)} diff ${shq(`${state.base}..${state.branch}`)}`,
+    `git -C ${shq(t)} log --oneline ${shq(`${state.baseCommit ?? state.base}..${state.branch}`)}`,
+    `git -C ${shq(t)} diff ${shq(`${state.baseCommit ?? state.base}..${state.branch}`)}`,
     "```",
     "",
     ...takeBlock(state),

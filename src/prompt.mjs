@@ -27,6 +27,8 @@ function feedback({ attempt, attempts, previous }) {
       return `${head} It changed no files, so it failed. The step needs a change in the working tree.`;
     case "timeout":
       return `${head} It ran past the time limit and was stopped, so it may be incomplete. Pick up where it left off and keep this attempt shorter.`;
+    case "gate timeout":
+      return `${head} The gate ran past its time limit and was stopped, which usually means a test or build step hangs. Here are the last ${FEEDBACK_LINES} lines of its output:\n\n\`\`\`\n${tailLines(previous.logTail, FEEDBACK_LINES)}\n\`\`\``;
     default:
       return `${head} The gate failed. Here are the last ${FEEDBACK_LINES} lines of its output:\n\n\`\`\`\n${tailLines(previous.logTail, FEEDBACK_LINES)}\n\`\`\``;
   }

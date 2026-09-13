@@ -20,6 +20,8 @@ describe("parseCli", () => {
       claudeCmd: null,
       claudeCmdGiven: false,
       sandbox: true,
+      installTimeoutMinutes: 15,
+      gateTimeoutMinutes: 15,
     });
   });
 
@@ -50,6 +52,7 @@ describe("parseCli", () => {
       claudeCmdGiven: true,
       sandbox: false,
     });
+    expect(parseCli([...base, "--install-timeout", "2", "--gate-timeout", "0.5"])).toMatchObject({ installTimeoutMinutes: 2, gateTimeoutMinutes: 0.5 });
   });
 
   it("falls back to BUILD_LOOP_CLAUDE, with the flag winning", () => {

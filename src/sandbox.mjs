@@ -42,38 +42,65 @@ export const CLAUDE_CONFIG_PATHS = [
   ".claude/keybindings.json",
 ];
 
-// kind: "claude" (the agent session) or "gate" (npm run check).
-export function buildProfile({ kind, home, worktree, target, tmpDirs = [] }) {
+// kind: "claude" (the agent session), "gate" (npm run check), or "install"
+// (the install command, which can run lifecycle scripts from an unreviewed
+// base branch when runs are stacked).
+//
+// Writes are denied everywhere by default and allowed only where a run needs
+// them. npmCache is a cache owned by build-loop, so install scripts cannot
+// touch the user's own ~/.npm.
+export function buildProfile({ kind, home, worktree, target, tmpDirs = [], npmCache }) {
+  const nodeModules = path.join(worktree, "node_modules");
   const lines = [
     "(version 1)",
     "(allow default)",
     "",
-    ";; Writes: nothing under the home folder,",
-    `(deny file-write* (subpath ${q(home)}))`,
-    ";; temp folders are fine,",
+    ";; Writes: denied everywhere, then allowed only where a run needs them.",
+    "(deny file-write*)",
+    ";; Devices such as /dev/null and the terminal.",
+    '(allow file-write* (subpath "/dev"))',
+    ";; Temp folders.",
     ...tmpDirs.map((dir) => `(allow file-write* (subpath ${q(dir)}))`),
-    ";; npm writes debug logs here,",
-    `(allow file-write* (subpath ${q(path.join(home, ".npm", "_logs"))}))`,
-    ";; never the target checkout (denied after the temp allows, in case it lives under one),",
-    `(deny file-write* (subpath ${q(target)}))`,
-    ";; and the worktree is the workspace,",
-    `(allow file-write* (subpath ${q(worktree)}))`,
-    ";; except installed dependencies (the gate's own tools live there) and the",
-    ";; .git pointer file that ties the worktree to its repository. These come",
-    ";; after the temp allows so a worktree under a temp folder is still covered.",
-    `(deny file-write* (subpath ${q(path.join(worktree, "node_modules"))}))`,
-    `(allow file-write* (subpath ${q(path.join(worktree, "node_modules", ".vite"))}) (subpath ${q(path.join(worktree, "node_modules", ".cache"))}) (subpath ${q(path.join(worktree, "node_modules", ".vite-temp"))}))`,
-    `(deny file-write* (literal ${q(path.join(worktree, ".git"))}))`,
   ];
+
+  if (npmCache) {
+    lines.push(
+      kind === "install"
+        ? `(allow file-write* (subpath ${q(npmCache)}))`
+        : `(allow file-write* (subpath ${q(path.join(npmCache, "_logs"))}))`
+    );
+  }
+
+  lines.push(
+    ";; Never the target checkout (denied after the temp allows, in case it lives under one).",
+    `(deny file-write* (subpath ${q(target)}))`,
+    ";; The worktree is the workspace.",
+    `(allow file-write* (subpath ${q(worktree)}))`
+  );
+
+  if (kind !== "install") {
+    lines.push(
+      ";; Not installed dependencies (the gate's own tools live there), except caches test tools write.",
+      `(deny file-write* (subpath ${q(nodeModules)}))`,
+      `(allow file-write* (subpath ${q(path.join(nodeModules, ".vite"))}) (subpath ${q(path.join(nodeModules, ".vite-temp"))}) (subpath ${q(path.join(nodeModules, ".cache"))}))`
+    );
+  }
+
+  lines.push(
+    ";; Not the .git pointer file that ties the worktree to its repository.",
+    `(deny file-write* (literal ${q(path.join(worktree, ".git"))}))`
+  );
 
   if (kind === "claude") {
     lines.push(
       "",
-      ";; The Claude CLI keeps sessions and state here.",
+      ";; The Claude CLI keeps sessions and logs here.",
       `(allow file-write* (subpath ${q(path.join(home, ".claude"))}))`,
-      `(allow file-write* (regex #"^${rx(path.join(home, ".claude.json"))}"))`,
-      ";; but not the configuration that would change later sessions.",
+      `(allow file-write* (subpath ${q(path.join(home, "Library", "Caches", "claude-cli-nodejs"))}))`,
+      ";; Not the configuration that would change later sessions, including",
+      ";; ~/.claude.json, which holds per-project permissions and MCP servers.",
       ...CLAUDE_CONFIG_PATHS.map((p) => `(deny file-write* (subpath ${q(path.join(home, p))}))`),
+      `(deny file-write* (regex #"^${rx(path.join(home, ".claude"))}\\.json"))`,
       `(deny file-write* (regex #"^${rx(path.join(home, ".claude", "projects"))}/[^/]+/memory(/|$)"))`
     );
   }

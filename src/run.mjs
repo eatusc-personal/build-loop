@@ -10,7 +10,8 @@ import { killActive } from "./exec.mjs";
 import { defaultInstall, hasCheckScript, runGate, runInstall } from "./gate.mjs";
 import * as git from "./git.mjs";
 import { outOfScope } from "./glob.mjs";
-import { runId, runPaths } from "./paths.mjs";
+import { childEnv } from "./env.mjs";
+import { runId, runPaths, stateRoot } from "./paths.mjs";
 import { collectProvenance } from "./provenance.mjs";
 import { checkReviewable } from "./reviewable.mjs";
 import { buildProfile, sandboxAvailable } from "./sandbox.mjs";
@@ -72,7 +73,9 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
     pid: process.pid,
     target: opts.target,
     base: opts.base,
-    baseCommit: git.revParse(opts.target, opts.base),
+    // Resolved once. The worktree is cut from this exact commit and the review
+    // commands use it, so a base branch that moves later cannot change either.
+    baseCommit: git.revParse(opts.target, `${opts.base}^{commit}`),
     branch: paths.branch,
     worktree: paths.worktree,
     runDir: paths.runDir,
@@ -134,6 +137,15 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
   fs.mkdirSync(paths.worktreesDir, { recursive: true });
   // The exact steps text this run used, so later edits to the file cannot change the record.
   fs.writeFileSync(file("steps.md"), stepsText);
+  // Write "running" with this pid before the worktree exists, so clean never
+  // sees the worktree without a live run behind it.
+  writeReport();
+
+  const npmCache = path.join(stateRoot(env), "npm-cache");
+  fs.mkdirSync(npmCache, { recursive: true });
+  // Children get an allowlisted environment, never a copy of the runner's.
+  const baseEnv = childEnv(env, { npm_config_cache: npmCache });
+  const setupChanges = () => git.changedPaths(paths.worktree);
 
   const onSignal = (signal) => {
     killActive();
@@ -147,11 +159,11 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
   process.once("SIGTERM", onSignal);
 
   try {
-    git.worktreeAdd(opts.target, paths.branch, paths.worktree, opts.base);
+    git.worktreeAdd(opts.target, paths.branch, paths.worktree, state.baseCommit);
     event(`worktree created at ${paths.worktree} on ${paths.branch}`);
 
     // Sandbox profiles use real paths (/tmp is /private/tmp on macOS).
-    const profiles = { claude: null, gate: null };
+    const profiles = { claude: null, gate: null, install: null };
     if (state.sandbox.enabled) {
       const real = (p) => fs.realpathSync(p);
       const common = {
@@ -159,12 +171,13 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
         worktree: real(paths.worktree),
         target: real(opts.target),
         tmpDirs: [...new Set([real(os.tmpdir()), real("/tmp")])],
+        npmCache: real(npmCache),
       };
-      for (const kind of ["claude", "gate"]) {
+      for (const kind of ["install", "claude", "gate"]) {
         profiles[kind] = file(`sandbox-${kind}.sb`);
         fs.writeFileSync(profiles[kind], buildProfile({ kind, ...common }));
       }
-      state.sandbox.profiles = ["sandbox-claude.sb", "sandbox-gate.sb"];
+      state.sandbox.profiles = ["sandbox-install.sb", "sandbox-claude.sb", "sandbox-gate.sb"];
       event("sandbox profiles written");
     } else {
       event("WARNING: running without the sandbox; Claude and the gate have your full user permissions");
@@ -173,20 +186,44 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
 
     const install = opts.install ?? defaultInstall(paths.worktree);
     event(`install started: ${install}`);
-    const installed = await runInstall(paths.worktree, install, file("install.log"));
+    const installed = await runInstall(paths.worktree, install, file("install.log"), {
+      profileFile: profiles.install,
+      env: baseEnv,
+      timeoutMs: opts.installTimeoutMinutes * 60 * 1000,
+      marker: `${id}-install`,
+    });
     if (!installed.ok) {
       state.setupLog = { title: "Install log", text: tailLines(readText(file("install.log")), GATE_TAIL_LINES) };
-      event(`install failed (exit ${installed.code})`);
-      return finish("failed", `install failed: \`${install}\` exited ${installed.code}`, 1);
+      const why = installed.timedOut ? `timed out after ${opts.installTimeoutMinutes} min` : `exited ${installed.code}`;
+      event(`install failed (${why})`);
+      return finish("failed", `install failed: \`${install}\` ${why}`, 1);
     }
     event("install done");
 
+    // Setup must not change the tree, or a step could commit its leftovers as work.
+    const changedByInstall = setupChanges();
+    if (changedByInstall.length) {
+      event(`install changed files: ${changedByInstall.join(", ")}`);
+      return finish("refused", `install changed files in the worktree (${changedByInstall.join(", ")}); commit them to ${opts.base} or pass a different --install`, 1);
+    }
+
     event("baseline gate started");
-    const baseline = await runGate(paths.worktree, file("baseline.gate.log"), profiles.gate);
+    const baseline = await runGate(paths.worktree, file("baseline.gate.log"), {
+      profileFile: profiles.gate,
+      env: baseEnv,
+      timeoutMs: opts.gateTimeoutMinutes * 60 * 1000,
+      marker: `${id}-baseline`,
+    });
     if (!baseline.ok) {
       state.setupLog = { title: "Baseline gate log", text: tailLines(readText(file("baseline.gate.log")), GATE_TAIL_LINES) };
-      event("baseline red");
-      return finish("refused", "baseline red", 1);
+      const why = baseline.timedOut ? `baseline gate timed out after ${opts.gateTimeoutMinutes} min` : "baseline red";
+      event(why);
+      return finish("refused", why, 1);
+    }
+    const changedByBaseline = setupChanges();
+    if (changedByBaseline.length) {
+      event(`baseline gate changed files: ${changedByBaseline.join(", ")}`);
+      return finish("refused", `the baseline gate changed files in the worktree (${changedByBaseline.join(", ")}); the gate must not write tracked or unignored files`, 1);
     }
     event("baseline green");
 
@@ -225,6 +262,8 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
           stdoutFile: file(`${stem}.json`),
           stderrFile: file(`${stem}.stderr`),
           profileFile: profiles.claude,
+          env: baseEnv,
+          marker: `${id}-${stem}-claude`,
         });
         const claude = parseClaudeOutput(readText(file(`${stem}.json`)));
         if (claude.total_cost_usd !== null) s.costUsd = (s.costUsd ?? 0) + claude.total_cost_usd;
@@ -250,8 +289,16 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
             failure = { reason: "unreviewable", paths: unreviewable };
             event(`step ${step.index} attempt ${attempt} unreviewable: ${unreviewable.join("; ")}`);
           } else {
+            // Ignored files an attempt left behind (build output, test caches) could
+            // change what the gate does, and the scope check cannot see them.
+            git.cleanIgnored(paths.worktree);
             event("gate started");
-            const gate = await runGate(paths.worktree, file(`${stem}.gate.log`), profiles.gate);
+            const gate = await runGate(paths.worktree, file(`${stem}.gate.log`), {
+              profileFile: profiles.gate,
+              env: baseEnv,
+              timeoutMs: opts.gateTimeoutMinutes * 60 * 1000,
+              marker: `${id}-${stem}-gate`,
+            });
             // The gate runs code the attempt wrote, and that code can change files
             // too. Check scope and readability again on what will actually be committed.
             const afterGate = gate.ok ? git.changedPaths(paths.worktree) : [];
@@ -264,14 +311,19 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
               failure = { reason: "unreviewable", paths: unreviewableAfter };
               event(`step ${step.index} attempt ${attempt} unreviewable after the gate: ${unreviewableAfter.join("; ")}`);
             } else if (gate.ok) {
-              const { hash, files } = git.commitAll(paths.worktree, `loop: ${step.heading}`);
-              Object.assign(s, { status: "landed", reason: null, commit: hash, files });
-              event(`landed ${hash.slice(0, 7)}`);
+              const committed = git.commitAll(paths.worktree, `loop: ${step.heading}`, afterGate);
+              if (committed.mismatch) {
+                failure = { reason: "scope", paths: committed.mismatch };
+                event(`step ${step.index} attempt ${attempt} staged files differ from the checked files: ${committed.mismatch.join(", ")}`);
+              } else {
+                Object.assign(s, { status: "landed", reason: null, commit: committed.hash, files: committed.files });
+                event(`landed ${committed.hash.slice(0, 7)}`);
+              }
             } else {
               const log = readText(file(`${stem}.gate.log`));
               s.gateTail = tailLines(log, GATE_TAIL_LINES);
-              failure = { reason: "gate", logTail: log };
-              event("gate red");
+              failure = { reason: gate.timedOut ? "gate timeout" : "gate", logTail: log };
+              event(gate.timedOut ? `gate timed out after ${opts.gateTimeoutMinutes} min` : "gate red");
             }
           }
         }
