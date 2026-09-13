@@ -3,6 +3,7 @@
 // State shape:
 //   { target, base, baseCommit, branch, worktree, runDir, model, dryRun,
 //     startedAt, endedAt, outcome, stopReason, setupLog: { title, text },
+//     take: { checkout, canFastForward },
 //     steps: [{ index, heading, status, attemptsUsed, reason, commit,
 //               files: [{ path, added, removed }], gateTail, costUsd, turns }] }
 // costUsd and turns are summed across a step's attempts, or null when unknown.
@@ -28,6 +29,33 @@ function filesCell(files) {
 export function totalCost(steps) {
   const costs = steps.map((s) => s.costUsd).filter((c) => typeof c === "number");
   return costs.length ? costs.reduce((a, b) => a + b, 0) : null;
+}
+
+export const isLoopBranch = (name) => /^loop\//.test(name ?? "");
+
+function takeBlock(state) {
+  const t = state.target;
+  const lines = ["## Take it", ""];
+  if (isLoopBranch(state.base)) {
+    lines.push(`This branch is built on \`${state.base}\`, so taking it also takes that run's commits.`, "");
+  }
+  const { checkout, canFastForward } = state.take ?? {};
+  if (checkout && isLoopBranch(state.base)) {
+    lines.push("Everything taking it brings in:", "", "```", `git -C ${t} log --oneline ${checkout}..${state.branch}`, "```", "");
+  }
+  if (checkout && canFastForward === true) {
+    lines.push(`When this report was written, the target's checkout (\`${checkout}\`) could fast-forward to this branch:`);
+    lines.push("", "```", `git -C ${t} merge --ff-only ${state.branch}`, "```", "");
+  } else if (checkout && canFastForward === false) {
+    lines.push(
+      `When this report was written, the target's checkout (\`${checkout}\`) had commits this branch does not, so a fast-forward will not work. Merge it:`
+    );
+    lines.push("", "```", `git -C ${t} merge ${state.branch}`, "```", "");
+  } else {
+    lines.push(`Only works if the target's checkout is on \`${state.base}\` and \`${state.base}\` has not moved past the branch point.`);
+    lines.push("", "```", `git -C ${t} merge --ff-only ${state.branch}`, "```", "");
+  }
+  return lines;
 }
 
 export function renderReport(state) {
@@ -89,14 +117,7 @@ export function renderReport(state) {
     `git -C ${t} diff ${state.base}..${state.branch}`,
     "```",
     "",
-    "## Take it",
-    "",
-    `Only works if the target's checkout is on \`${state.base}\` and \`${state.base}\` has not moved past the branch point.`,
-    "",
-    "```",
-    `git -C ${t} merge --ff-only ${state.branch}`,
-    "```",
-    "",
+    ...takeBlock(state),
     "## Discard it",
     "",
     "```",

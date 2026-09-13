@@ -78,6 +78,31 @@ describe("renderReport", () => {
     );
   });
 
+  it("says ff-only when the checkout can fast-forward, and plain merge when it has moved", () => {
+    const ff = renderReport({ ...state, take: { checkout: "main", canFastForward: true } });
+    expect(ff).toContain("the target's checkout (`main`) could fast-forward to this branch");
+    expect(ff).toContain("git -C /Users/me/app merge --ff-only loop/20260912-213000");
+    expect(ff).not.toContain("Only works if");
+
+    const moved = renderReport({ ...state, take: { checkout: "main", canFastForward: false } });
+    expect(moved).toContain("had commits this branch does not, so a fast-forward will not work");
+    expect(moved).toContain("git -C /Users/me/app merge loop/20260912-213000\n");
+    expect(moved).not.toContain("--ff-only");
+  });
+
+  it("notes that a loop-branch base is taken along with this run", () => {
+    const stacked = renderReport({
+      ...state,
+      base: "loop/20260912-200000",
+      take: { checkout: "main", canFastForward: true },
+    });
+    expect(stacked).toContain("| Base | `loop/20260912-200000` at");
+    expect(stacked).toContain("This branch is built on `loop/20260912-200000`, so taking it also takes that run's commits.");
+    expect(stacked).toContain("git -C /Users/me/app log --oneline main..loop/20260912-213000");
+    expect(stacked).toContain("git -C /Users/me/app diff loop/20260912-200000..loop/20260912-213000");
+    expect(renderReport(state)).not.toContain("This branch is built on");
+  });
+
   it("includes a setup log when install or the baseline failed", () => {
     const refused = renderReport({ ...state, setupLog: { title: "Baseline gate log", text: "lint exploded" } });
     expect(refused).toContain("## Baseline gate log (last 40 lines)");

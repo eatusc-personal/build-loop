@@ -72,6 +72,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
     outcome: "running",
     stopReason: null,
     setupLog: null,
+    take: null,
     steps: parsed.steps.map((s) => ({
       index: s.index,
       heading: s.heading,
@@ -87,7 +88,17 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
     })),
   };
 
+  // Whether the target's checked-out branch can fast-forward to this run's
+  // branch right now. Recomputed on every write, since the checkout can move
+  // while a run is going (for example a commit on main while a follow-up runs).
+  const takeAdvice = () => {
+    const checkout = git.currentBranch(opts.target);
+    if (!checkout || !git.branchExists(opts.target, paths.branch)) return { checkout, canFastForward: null };
+    return { checkout, canFastForward: git.isAncestor(opts.target, checkout, paths.branch) };
+  };
+
   const writeReport = () => {
+    state.take = takeAdvice();
     fs.writeFileSync(reportPath, renderReport(state));
     fs.writeFileSync(file("state.json"), `${JSON.stringify(state, null, 2)}\n`);
   };

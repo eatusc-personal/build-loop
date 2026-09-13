@@ -318,6 +318,46 @@ ALLOWED: three.txt
     expect(sh(target, "git", ["log", "--format=%s", `main..${r.branch}`])).toBe("loop: Step 3: Never reached\nloop: Step 1: Land");
   });
 
+  it("builds on a loop branch as the base and tells the truth about taking it", () => {
+    const target = makeTarget();
+    const first = runLoop(target, writeSteps(stepsGreen), { plan: [{ do: "write", path: "notes/first.md", content: "1\n" }] });
+    expect(first.code).toBe(0);
+
+    spawnSync("sleep", ["1.1"]);
+    const second = runLoop(target, writeSteps(stepsGreen), {
+      plan: [{ do: "write", path: "notes/second.md", content: "2\n" }],
+      extra: ["--base", first.branch],
+    });
+    expect(second.code).toBe(0);
+
+    // Cut from the first run's branch: its parent is that branch's tip, and it carries both commits.
+    expect(sh(target, "git", ["rev-parse", `${second.branch}~1`])).toBe(sh(target, "git", ["rev-parse", first.branch]));
+    expect(sh(target, "git", ["rev-list", "--count", `main..${second.branch}`])).toBe("2");
+    expect(second.report).toContain(`| Base | \`${first.branch}\` at \`${sh(target, "git", ["rev-parse", first.branch]).slice(0, 12)}\` |`);
+    expect(second.report).toContain(`git -C ${target} diff ${first.branch}..${second.branch}`);
+    expect(second.report).toContain(`This branch is built on \`${first.branch}\``);
+    expect(second.report).toContain(`git -C ${target} merge --ff-only ${second.branch}`);
+
+    // Move main past the branch point, then stack a third run: fast-forward no longer works, and the report says so.
+    fs.writeFileSync(path.join(target, "main-only.txt"), "moved\n");
+    sh(target, "git", ["add", "-A"]);
+    sh(target, "git", ["commit", "-q", "-m", "main moves on"]);
+    spawnSync("sleep", ["1.1"]);
+    const third = runLoop(target, writeSteps(stepsGreen), {
+      plan: [{ do: "write", path: "notes/third.md", content: "3\n" }],
+      extra: ["--base", second.branch],
+    });
+    expect(third.code).toBe(0);
+    expect(third.report).toContain("had commits this branch does not, so a fast-forward will not work");
+    expect(third.report).toContain(`git -C ${target} merge ${third.branch}\n`);
+    expect(third.report).not.toContain("--ff-only");
+
+    // And the advice works.
+    sh(target, "git", ["merge", "-q", "--no-edit", third.branch]);
+    expect(sh(target, "git", ["rev-list", "--count", `main..${third.branch}`])).toBe("0");
+    expect(sh(target, "git", ["log", "--format=%s", "main"]).split("\n").filter((l) => l.startsWith("loop: "))).toHaveLength(3);
+  });
+
   it("dry-runs without calling Claude, then clean removes the merged worktree and keeps unmerged ones", () => {
     const target = makeTarget();
     const dry = runLoop(target, writeSteps(threeSteps), { extra: ["--dry-run"] });
