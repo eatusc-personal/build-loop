@@ -86,6 +86,50 @@ DONE WHEN: real
     expect(steps[0].allowed).toBeNull();
   });
 
+  it("keeps an inner three-backtick block inside a four-backtick fence", () => {
+    const md = `## Step 1: Document the format
+
+Show this example:
+
+\`\`\`\`md
+A steps file shows code like this, and the closing fence is below:
+\`\`\`
+
+## Example step
+
+ALLOWED: nope/**
+\`\`\`\`
+
+ALLOWED: docs/**
+`;
+    const { steps } = parseSteps(md);
+    expect(steps.map((s) => s.heading)).toEqual(["Step 1: Document the format"]);
+    expect(steps[0].body).toContain("## Example step");
+    expect(steps[0].body).toContain("ALLOWED: nope/**");
+    expect(steps[0].allowed).toEqual(["docs/**"]);
+  });
+
+  it("closes a tilde fence only with tildes, and ignores a closing line with trailing text", () => {
+    const md = `## Step 1
+
+~~~
+\`\`\`
+## Still inside
+~~~ not a close
+~~~
+
+## Step 2
+`;
+    const { steps } = parseSteps(md);
+    expect(steps.map((s) => s.heading)).toEqual(["Step 1", "Step 2"]);
+    expect(steps[0].body).toContain("## Still inside");
+  });
+
+  it("reads CRLF files the same as LF", () => {
+    const { steps } = parseSteps("## Step 1\r\nBody\r\nALLOWED: a.js\r\n");
+    expect(steps[0]).toMatchObject({ body: "Body", allowed: ["a.js"] });
+  });
+
   it("does not take a level-3 heading as a step", () => {
     const { steps } = parseSteps("## Step\n### Sub\ntext\n");
     expect(steps).toHaveLength(1);

@@ -7,7 +7,28 @@
 // runs until the next trailer or the end of the step. Headings and trailers
 // inside fenced code blocks are ordinary text.
 
-const FENCE = /^\s*(```|~~~)/;
+// A fence opens with 3+ backticks or tildes and closes only on a line of the
+// same character, at least as long, with nothing else after it (CommonMark).
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+function fenceTracker() {
+  let open = null; // { char, length } while inside a fenced block
+  return (line) => {
+    const m = FENCE.exec(line);
+    if (!m) return open !== null;
+    const run = m[1];
+    if (open === null) {
+      if (run[0] === "`" && m[2].includes("`")) return false; // not a fence per CommonMark
+      open = { char: run[0], length: run.length };
+      return true;
+    }
+    if (run[0] === open.char && run.length >= open.length && m[2].trim() === "") {
+      open = null;
+      return true; // the closing line itself is still part of the block
+    }
+    return true;
+  };
+}
 const STEP_HEADING = /^##\s+(.+?)\s*#*\s*$/;
 const TITLE_HEADING = /^#\s+(.+?)\s*#*\s*$/;
 const TRAILER = /^(DONE WHEN|ALLOWED):\s?(.*)$/;
@@ -24,11 +45,10 @@ function parseStepBody(lines) {
   const body = [];
   const trailers = { "DONE WHEN": null, ALLOWED: null };
   let current = null; // name of the trailer being collected, or null for body
-  let inFence = false;
+  const inFence = fenceTracker();
 
   for (const line of lines) {
-    if (FENCE.test(line)) inFence = !inFence;
-    const match = !inFence && TRAILER.exec(line);
+    const match = !inFence(line) && TRAILER.exec(line);
     if (match) {
       current = match[1];
       trailers[current] = [match[2]];
@@ -58,11 +78,11 @@ export function parseSteps(markdown) {
   let title = null;
   const contextLines = [];
   const rawSteps = [];
-  let inFence = false;
+  const inFence = fenceTracker();
 
   for (const line of lines) {
-    if (FENCE.test(line)) inFence = !inFence;
-    const step = !inFence && STEP_HEADING.exec(line);
+    const fenced = inFence(line);
+    const step = !fenced && STEP_HEADING.exec(line);
     if (step) {
       rawSteps.push({ heading: step[1], lines: [] });
       continue;
@@ -71,7 +91,7 @@ export function parseSteps(markdown) {
       rawSteps[rawSteps.length - 1].lines.push(line);
       continue;
     }
-    const titleMatch = !inFence && title === null && contextLines.every((l) => l.trim() === "") && TITLE_HEADING.exec(line);
+    const titleMatch = !fenced && title === null && contextLines.every((l) => l.trim() === "") && TITLE_HEADING.exec(line);
     if (titleMatch) title = titleMatch[1];
     else contextLines.push(line);
   }
