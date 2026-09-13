@@ -82,6 +82,6 @@ describe("tailLines and loadPreamble", () => {
     const preamble = loadPreamble();
     expect(preamble).toContain("unattended build loop");
     expect(preamble).toContain("npm run check");
-    expect(preamble).not.toContain("—");
+    expect(preamble).not.toContain("\u2014");
   });
 });

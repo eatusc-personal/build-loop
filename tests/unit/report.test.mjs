@@ -86,7 +86,7 @@ describe("renderReport", () => {
     expect(dry).toContain("sonnet (dry run, not called)");
     expect(dry).toContain("| Total cost | n/a |");
     expect(dry).toContain("(0 landed, 0 failed, 3 skipped, 3 total)");
-    expect(dry).not.toContain("—");
+    expect(dry).not.toContain("\u2014");
   });
 });
 
