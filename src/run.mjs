@@ -4,12 +4,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { claudeAvailable, parseClaudeOutput, runClaude } from "./claude.mjs";
+import { claudeVersion, parseClaudeOutput, runClaude } from "./claude.mjs";
 import { killActive } from "./exec.mjs";
 import { defaultInstall, hasCheckScript, runGate, runInstall } from "./gate.mjs";
 import * as git from "./git.mjs";
 import { outOfScope } from "./glob.mjs";
 import { runId, runPaths } from "./paths.mjs";
+import { collectProvenance } from "./provenance.mjs";
 import { checkReviewable } from "./reviewable.mjs";
 import { assemblePrompt, loadPreamble, tailLines } from "./prompt.mjs";
 import { GATE_TAIL_LINES, renderReport } from "./report.mjs";
@@ -34,19 +35,21 @@ const readText = (file) => {
 export function preflight(opts) {
   if (!fs.existsSync(opts.target) || !git.isRepo(opts.target)) throw new Refusal(`target is not a git repository: ${opts.target}`);
   if (!fs.existsSync(opts.steps)) throw new Refusal(`steps file not found: ${opts.steps}`);
-  const parsed = parseSteps(fs.readFileSync(opts.steps, "utf8"));
+  const stepsText = fs.readFileSync(opts.steps, "utf8");
+  const parsed = parseSteps(stepsText);
   if (parsed.steps.length === 0) throw new Refusal(`steps file has no steps (no "## " headings): ${opts.steps}`);
   if (git.isDirty(opts.target)) throw new Refusal(`target has uncommitted changes; commit or stash them first: ${opts.target}`);
   if (!git.branchExists(opts.target, opts.base)) throw new Refusal(`base branch does not exist: ${opts.base}`);
   if (!hasCheckScript(git.showFile(opts.target, opts.base, "package.json") ?? "")) {
     throw new Refusal(`package.json on ${opts.base} has no "check" script`);
   }
-  if (!opts.claudeCmdGiven && !claudeAvailable("claude")) throw new Refusal("`claude --version` failed; is the Claude CLI installed?");
-  return parsed;
+  const version = opts.claudeCmdGiven ? null : claudeVersion("claude");
+  if (!opts.claudeCmdGiven && !version) throw new Refusal("`claude --version` failed; is the Claude CLI installed?");
+  return { parsed, stepsText, claudeVersion: version };
 }
 
 export async function runLoop(opts, { out = (line) => process.stdout.write(`${line}\n`), env = process.env, now = () => new Date() } = {}) {
-  const parsed = preflight(opts);
+  const { parsed, stepsText, claudeVersion: claudeVer } = preflight(opts);
   const startedAt = now();
   const id = runId(startedAt);
   const paths = runPaths(opts.target, id, env);
@@ -59,6 +62,8 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
   const reportPath = file("report.md");
 
   const state = {
+    ...collectProvenance({ opts, env, stepsText, claudeVersion: claudeVer }),
+    runId: id,
     target: opts.target,
     base: opts.base,
     baseCommit: git.revParse(opts.target, opts.base),
@@ -68,7 +73,9 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
     model: opts.model,
     dryRun: opts.dryRun,
     startedAt: localStamp(startedAt),
+    startedAtUtc: startedAt.toISOString(),
     endedAt: null,
+    endedAtUtc: null,
     outcome: "running",
     stopReason: null,
     setupLog: null,
@@ -106,7 +113,9 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
   const finish = (outcome, stopReason, code) => {
     state.outcome = outcome;
     state.stopReason = stopReason;
-    state.endedAt = localStamp(now());
+    const ended = now();
+    state.endedAt = localStamp(ended);
+    state.endedAtUtc = ended.toISOString();
     for (const s of state.steps) if (s.status === "pending" || s.status === "running") s.status = "skipped";
     writeReport();
     out(reportPath);
@@ -116,6 +125,8 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
 
   fs.mkdirSync(paths.runDir, { recursive: true });
   fs.mkdirSync(paths.worktreesDir, { recursive: true });
+  // The exact steps text this run used, so later edits to the file cannot change the record.
+  fs.writeFileSync(file("steps.md"), stepsText);
 
   const onSignal = (signal) => {
     killActive();

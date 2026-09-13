@@ -72,8 +72,10 @@ export function parseClaudeOutput(text) {
   };
 }
 
-export function claudeAvailable(cmd = "claude") {
-  return run(cmd, ["--version"]).code === 0;
+// The CLI's version line, or null when `claude --version` fails.
+export function claudeVersion(cmd = "claude") {
+  const r = run(cmd, ["--version"]);
+  return r.code === 0 ? r.stdout.trim() || "unknown" : null;
 }
 
 export async function runClaude({ cmd, prompt, model, maxTurns, cwd, timeoutMs, stdoutFile, stderrFile }) {

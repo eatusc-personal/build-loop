@@ -77,6 +77,7 @@ function runLoop(target, steps, { plan, extra = [], stateEnv = {} } = {}) {
       env: {
         ...process.env,
         BUILD_LOOP_HOME: path.join(tmp, "state"),
+        BUILD_LOOP_MACHINE: "test-machine",
         FAKE_CLAUDE_STATE: fakeState,
         FAKE_CLAUDE_PLAN: JSON.stringify(plan ?? [{ do: "nothing" }]),
         ...stateEnv,
@@ -139,6 +140,34 @@ describe("build-loop against a throwaway repo", () => {
     expect(prompt).toContain("You may only change these paths:\n\n- status.txt\n- notes/**");
     expect(JSON.parse(fs.readFileSync(path.join(r.fakeState, "env-1.json"), "utf8")).LEARNING_LOOP).toBe("0");
     expect(JSON.parse(fs.readFileSync(path.join(r.fakeState, "args-1.json"), "utf8"))).toContain("dontAsk");
+  });
+
+  it("records where the run happened and snapshots the steps file", () => {
+    const target = makeTarget();
+    sh(target, "git", ["remote", "add", "origin", "https://example.com/me/target-app.git"]);
+    const stepsPath = writeSteps(stepsGreen);
+    const r = runLoop(target, stepsPath, { plan: [{ do: "write", path: "notes/a.md", content: "hi\n" }] });
+    expect(r.code).toBe(0);
+
+    // Editing the steps file afterwards must not change what the run recorded.
+    fs.writeFileSync(stepsPath, "## Something else entirely\n");
+
+    const state = JSON.parse(fs.readFileSync(path.join(r.runDir, "state.json"), "utf8"));
+    expect(state.schemaVersion).toBe(2);
+    expect(state.runId).toBe(r.branch.replace("loop/", ""));
+    expect(state.machine).toMatchObject({ name: "test-machine", source: "BUILD_LOOP_MACHINE" });
+    expect(state.machine.hostname).toBe(os.hostname());
+    expect(state.repo.origin).toBe("https://example.com/me/target-app.git");
+    expect(state.startedAtUtc).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(Date.parse(state.endedAtUtc)).toBeGreaterThanOrEqual(Date.parse(state.startedAtUtc));
+    expect(state.runner.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(state.versions.node).toBe(process.version);
+    expect(state.versions.claude).toContain("custom command:");
+    expect(fs.readFileSync(path.join(r.runDir, "steps.md"), "utf8")).toBe(stepsGreen);
+    expect(state.stepsFile).toMatchObject({ source: stepsPath, snapshot: "steps.md" });
+    expect(state.stepsFile.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.report).toContain("| Machine | test-machine (");
+    expect(r.report).toContain("(https://example.com/me/target-app.git)");
   });
 
   it("retries a red step and feeds the gate log back into the next prompt", () => {
