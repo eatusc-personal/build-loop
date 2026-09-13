@@ -19,6 +19,7 @@ Node 20, zero runtime dependencies.
 ```
 node bin/loop.mjs --target <abs path> --steps <file> [options]
 node bin/loop.mjs clean --target <abs path> [--base <branch>]
+node bin/loop.mjs runs [--into <branch>]
 
   --base <branch>        branch to cut from            default: main
   --attempts <n>         attempts per step             default: 3
@@ -46,10 +47,34 @@ State lives under `~/.build-loop/` (override with `BUILD_LOOP_HOME`):
 
 ```
 ~/.build-loop/worktrees/<target folder name>/<run-id>/   the worktree
-~/.build-loop/runs/<target folder name>/<run-id>/        report.md, state.json, logs
+~/.build-loop/runs/<target folder name>/<run-id>/        report.md, state.json, steps.md, logs
+~/.build-loop/runs.jsonl                                 the run index, rebuilt by `runs`
 ```
 
 `<run-id>` is `YYYYMMDD-HHMMSS`.
+
+## Run history
+
+Every run folder is a permanent record; `clean` never deletes one. `state.json` is the source of truth. Besides steps, attempts, and costs, it records where and how the run happened:
+
+- `machine`: a name plus the hostname. The name comes from `BUILD_LOOP_MACHINE` if set, else the one word in `~/code/agent-library/.machine` (`laptop`, `studio`), else the hostname.
+- `repo.origin`: the target's origin URL, so the same repo matches across machines even from different folders.
+- `startedAtUtc` and `endedAtUtc` next to the local times.
+- `runner.commit` (and whether build-loop had uncommitted changes), plus the node and claude versions.
+- `stepsFile` with a sha256, and `steps.md`: a copy of the exact steps text the run used.
+
+`build-loop runs` rebuilds `~/.build-loop/runs.jsonl`, one JSON line per run keyed by `machine/target/run-id`, and prints a table. It also decides what happened to each run by asking git on this machine:
+
+| Decision | Meaning |
+| --- | --- |
+| `taken` | the run's last landed commit is in `--into` (default `main`) |
+| `pending` | the loop branch still exists and is not merged |
+| `discarded` | the branch was deleted without merging, or its commits are gone |
+| `nothing to take` | no step landed (dry runs, refusals, runs that failed at step 1) |
+| `unknown` | the run came from another machine, or its target is not on this one |
+| `unfinished` | the run never wrote an outcome |
+
+A loop branch only exists on the machine that made it, so run `build-loop runs` there. If you run on more than one machine, copy the run folders to one place (for example `rsync -a ~/.build-loop/runs/ studio:.build-loop/runs/`); the machine field keeps them apart. The index can be deleted at any time and rebuilt from the folders.
 
 ## Steps file format
 
@@ -103,6 +128,7 @@ Read the report, then the diff, then decide. Per-attempt prompts, Claude JSON ou
 - Copy gitignored files such as `.env.local` into the worktree.
 - Start from a red baseline, since it could not tell its failures from inherited ones.
 - Land a change git cannot show as a text diff.
+- Delete run history.
 - Use `--dangerously-skip-permissions`.
 
 ## Development
@@ -111,4 +137,4 @@ Read the report, then the diff, then decide. Per-attempt prompts, Claude JSON ou
 npm test
 ```
 
-Unit tests cover argument parsing, steps-file parsing, glob matching, prompt assembly, the control-character scan, output parsing, and report rendering. Integration tests run `bin/loop.mjs` end to end against throwaway git repos with `tests/fake-claude.mjs` in place of the Claude CLI. The real `claude` is never run by the tests.
+Unit tests cover argument parsing, steps-file parsing, glob matching, prompt assembly, the control-character scan, output parsing, report rendering, machine resolution, and run summaries and decisions. Integration tests run `bin/loop.mjs` end to end against throwaway git repos with `tests/fake-claude.mjs` in place of the Claude CLI. The real `claude` is never run by the tests.
