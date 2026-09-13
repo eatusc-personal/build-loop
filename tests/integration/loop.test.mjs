@@ -173,7 +173,7 @@ describe("build-loop against a throwaway repo", () => {
     expect(fs.existsSync(path.join(r.runDir, "step-1-attempt-2.gate.log"))).toBe(false);
     expect(fs.readFileSync(path.join(r.fakeState, "prompt-2.txt"), "utf8")).toContain("outside the allowed paths");
     expect(fs.readFileSync(path.join(r.fakeState, "prompt-2.txt"), "utf8")).toContain("- lib/outside.js");
-    expect(r.report).toMatch(/\| 1 \| Step 1: Make it green \| failed \| 2 \| scope: lib\/outside.js \|/);
+    expect(r.report).toMatch(/\| 1 \| Step 1: Make it green \| failed \| 2 \| 2 \| \$0\.02 \| scope: lib\/outside.js \|/);
     expect(r.report).toContain("Outcome: **stopped**");
 
     const worktree = r.report.match(/\| Worktree \| `([^`]+)` \|/)[1];
@@ -238,7 +238,7 @@ describe("build-loop against a throwaway repo", () => {
 
     expect(r.code).toBe(1);
     expect(r.elapsedMs).toBeLessThan(30000);
-    expect(r.report).toMatch(/\| failed \| 1 \| timeout \|/);
+    expect(r.report).toMatch(/\| failed \| 1 \| - \| - \| timeout \|/);
     const pid = Number(fs.readFileSync(path.join(r.fakeState, "pid-1.txt"), "utf8"));
     expect(() => process.kill(pid, 0)).toThrow();
   });
@@ -298,9 +298,9 @@ ALLOWED: three.txt
 
     expect(r.code).toBe(1);
     expect(r.calls).toBe(2);
-    expect(r.report).toMatch(/\| 1 \| Step 1: Land \| landed \| 1 \|  \| `[0-9a-f]{7}` \| `one.txt` \+1 -0 \|/);
-    expect(r.report).toMatch(/\| 2 \| Step 2: Change nothing \| failed \| 1 \| no changes \|/);
-    expect(r.report).toMatch(/\| 3 \| Step 3: Never reached \| skipped \| 0 \|/);
+    expect(r.report).toMatch(/\| 1 \| Step 1: Land \| landed \| 1 \| 1 \| \$0\.01 \|  \| `[0-9a-f]{7}` \| `one.txt` \+1 -0 \|/);
+    expect(r.report).toMatch(/\| 2 \| Step 2: Change nothing \| failed \| 1 \| 1 \| \$0\.01 \| no changes \|/);
+    expect(r.report).toMatch(/\| 3 \| Step 3: Never reached \| skipped \| 0 \| - \| - \|/);
     expect(r.report).toContain("(1 landed, 1 failed, 1 skipped, 3 total)");
     expect(r.report).toContain("| Total cost | $0.02 |");
   });

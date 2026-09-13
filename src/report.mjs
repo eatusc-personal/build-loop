@@ -4,13 +4,14 @@
 //   { target, base, baseCommit, branch, worktree, runDir, model, dryRun,
 //     startedAt, endedAt, outcome, stopReason, setupLog: { title, text },
 //     steps: [{ index, heading, status, attemptsUsed, reason, commit,
-//               files: [{ path, added, removed }], gateTail, costUsd }] }
+//               files: [{ path, added, removed }], gateTail, costUsd, turns }] }
+// costUsd and turns are summed across a step's attempts, or null when unknown.
 // status is one of: pending, running, landed, failed, skipped.
 
 export const GATE_TAIL_LINES = 40;
 
-function money(n) {
-  return typeof n === "number" ? `$${n.toFixed(2)}` : "n/a";
+function money(n, missing = "n/a") {
+  return typeof n === "number" ? `$${n.toFixed(2)}` : missing;
 }
 
 function cell(text) {
@@ -58,10 +59,14 @@ export function renderReport(state) {
   );
 
   lines.push("## Steps", "");
-  lines.push("| # | Step | Status | Attempts | Reason | Commit | Files changed |", "| --- | --- | --- | --- | --- | --- | --- |");
+  lines.push(
+    "| # | Step | Status | Attempts | Turns | Cost | Reason | Commit | Files changed |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+  );
   for (const s of state.steps) {
+    const turns = typeof s.turns === "number" ? s.turns : "-";
     lines.push(
-      `| ${s.index} | ${cell(s.heading)} | ${s.status} | ${s.attemptsUsed ?? 0} | ${cell(s.reason)} | ` +
+      `| ${s.index} | ${cell(s.heading)} | ${s.status} | ${s.attemptsUsed ?? 0} | ${turns} | ${money(s.costUsd, "-")} | ${cell(s.reason)} | ` +
         `${s.commit ? `\`${s.commit.slice(0, 7)}\`` : ""} | ${filesCell(s.files)} |`
     );
   }

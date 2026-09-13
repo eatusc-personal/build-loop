@@ -28,6 +28,7 @@ const state = {
         { path: "img.png", added: null, removed: null },
       ],
       costUsd: 0.5,
+      turns: 12,
     },
     {
       index: 2,
@@ -39,8 +40,9 @@ const state = {
       files: [],
       gateTail: "FAIL tests/unit/x.test.js",
       costUsd: 1.25,
+      turns: 40,
     },
-    { index: 3, heading: "Step 3: Log", status: "skipped", attemptsUsed: 0, reason: null, commit: null, files: [], costUsd: null },
+    { index: 3, heading: "Step 3: Log", status: "skipped", attemptsUsed: 0, reason: null, commit: null, files: [], costUsd: null, turns: null },
   ],
 };
 
@@ -52,12 +54,13 @@ describe("renderReport", () => {
     expect(md).toContain("Outcome: **stopped**. Step 2 failed after 3 attempts (1 landed, 1 failed, 1 skipped, 3 total)");
     expect(md).toContain("| Base | `main` at `8b9d32012345` |");
     expect(md).toContain("| Total cost | $1.75 |");
+    expect(md).toContain("| # | Step | Status | Attempts | Turns | Cost | Reason | Commit | Files changed |");
   });
 
   it("writes one row per step with status, attempts, reason, commit, and files", () => {
-    expect(md).toContain("| 1 | Step 1: Add PUT | landed | 1 |  | `abc1234` | `app/api/log/route.js` +30 -2<br>`img.png` (binary) |");
-    expect(md).toContain("| 2 | Step 2: Fix \\| component | failed | 3 | gate |  |  |");
-    expect(md).toContain("| 3 | Step 3: Log | skipped | 0 |  |  |  |");
+    expect(md).toContain("| 1 | Step 1: Add PUT | landed | 1 | 12 | $0.50 |  | `abc1234` | `app/api/log/route.js` +30 -2<br>`img.png` (binary) |");
+    expect(md).toContain("| 2 | Step 2: Fix \\| component | failed | 3 | 40 | $1.25 | gate |  |  |");
+    expect(md).toContain("| 3 | Step 3: Log | skipped | 0 | - | - |  |  |  |");
   });
 
   it("includes the gate tail for a failed step", () => {

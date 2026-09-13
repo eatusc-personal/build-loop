@@ -82,6 +82,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
       files: [],
       gateTail: null,
       costUsd: null,
+      turns: null,
       attempts: [],
     })),
   };
@@ -177,6 +178,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
         });
         const claude = parseClaudeOutput(readText(file(`${stem}.json`)));
         if (claude.total_cost_usd !== null) s.costUsd = (s.costUsd ?? 0) + claude.total_cost_usd;
+        if (claude.num_turns !== null) s.turns = (s.turns ?? 0) + claude.num_turns;
         const record = { attempt, exitCode: proc.code, timedOut: proc.timedOut, claude, reason: null, paths: [] };
         s.attempts.push(record);
 
