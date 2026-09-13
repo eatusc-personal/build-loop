@@ -2,7 +2,7 @@
 //
 // State shape:
 //   { target, base, baseCommit, branch, worktree, runDir, model, dryRun,
-//     startedAt, endedAt, outcome, stopReason, baselineLogTail,
+//     startedAt, endedAt, outcome, stopReason, setupLog: { title, text },
 //     steps: [{ index, heading, status, attemptsUsed, reason, commit,
 //               files: [{ path, added, removed }], gateTail, costUsd }] }
 // status is one of: pending, running, landed, failed, skipped.
@@ -67,8 +67,8 @@ export function renderReport(state) {
   }
   lines.push("");
 
-  if (state.baselineLogTail) {
-    lines.push(`## Baseline gate log (last ${GATE_TAIL_LINES} lines)`, "", "```", state.baselineLogTail, "```", "");
+  if (state.setupLog) {
+    lines.push(`## ${state.setupLog.title} (last ${GATE_TAIL_LINES} lines)`, "", "```", state.setupLog.text, "```", "");
   }
 
   for (const s of state.steps.filter((x) => x.status === "failed" && x.gateTail)) {

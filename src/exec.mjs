@@ -3,6 +3,21 @@
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 
+// Children started by runToFiles that have not exited yet. They run in their
+// own process groups, so a Ctrl-C on the runner does not reach them; the
+// runner's signal handler calls killActive() instead.
+const active = new Set();
+
+export function killActive(signal = "SIGKILL") {
+  for (const pid of active) {
+    try {
+      process.kill(-pid, signal);
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
 // Synchronous, captured. For short git commands.
 export function run(cmd, args, { cwd, env } = {}) {
   const r = spawnSync(cmd, args, { cwd, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
@@ -30,6 +45,7 @@ export function runToFiles(cmd, args, { cwd, env, stdoutFile, stderrFile, timeou
       detached: true,
       stdio: ["ignore", out, err],
     });
+    if (child.pid) active.add(child.pid);
 
     const killGroup = (signal) => {
       try {
@@ -48,6 +64,7 @@ export function runToFiles(cmd, args, { cwd, env, stdoutFile, stderrFile, timeou
     }
 
     const finish = (code, signal, error) => {
+      active.delete(child.pid);
       clearTimeout(timer);
       clearTimeout(killTimer);
       if (timedOut) killGroup("SIGKILL");

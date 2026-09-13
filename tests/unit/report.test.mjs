@@ -75,6 +75,12 @@ describe("renderReport", () => {
     );
   });
 
+  it("includes a setup log when install or the baseline failed", () => {
+    const refused = renderReport({ ...state, setupLog: { title: "Baseline gate log", text: "lint exploded" } });
+    expect(refused).toContain("## Baseline gate log (last 40 lines)");
+    expect(refused).toContain("lint exploded");
+  });
+
   it("marks a dry run and has no cost", () => {
     const dry = renderReport({ ...state, dryRun: true, outcome: "dry run", stopReason: null, steps: state.steps.map((s) => ({ ...s, status: "skipped", costUsd: null })) });
     expect(dry).toContain("sonnet (dry run, not called)");
