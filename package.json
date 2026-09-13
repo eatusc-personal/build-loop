@@ -1,0 +1,19 @@
+{
+  "name": "build-loop",
+  "version": "0.1.0",
+  "description": "Work through a steps file in an isolated git worktree, gated by the target repo's own npm run check.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "build-loop": "bin/loop.mjs"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.11"
+  }
+}
