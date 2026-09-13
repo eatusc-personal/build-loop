@@ -3,6 +3,7 @@
 // saved to the run folder and never read back to decide anything.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { claudeVersion, parseClaudeOutput, runClaude } from "./claude.mjs";
 import { killActive } from "./exec.mjs";
@@ -12,6 +13,7 @@ import { outOfScope } from "./glob.mjs";
 import { runId, runPaths } from "./paths.mjs";
 import { collectProvenance } from "./provenance.mjs";
 import { checkReviewable } from "./reviewable.mjs";
+import { buildProfile, sandboxAvailable } from "./sandbox.mjs";
 import { assemblePrompt, loadPreamble, tailLines } from "./prompt.mjs";
 import { GATE_TAIL_LINES, renderReport } from "./report.mjs";
 import { parseSteps } from "./steps.mjs";
@@ -34,6 +36,9 @@ const readText = (file) => {
 // Every refusal is checked before anything is created on disk.
 export function preflight(opts) {
   if (!fs.existsSync(opts.target) || !git.isRepo(opts.target)) throw new Refusal(`target is not a git repository: ${opts.target}`);
+  if (opts.sandbox !== false && !sandboxAvailable()) {
+    throw new Refusal("the macOS sandbox (sandbox-exec) is not available here; pass --no-sandbox to run Claude and the gate with your full user permissions");
+  }
   if (!fs.existsSync(opts.steps)) throw new Refusal(`steps file not found: ${opts.steps}`);
   const stepsText = fs.readFileSync(opts.steps, "utf8");
   const parsed = parseSteps(stepsText);
@@ -73,6 +78,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
     runDir: paths.runDir,
     model: opts.model,
     dryRun: opts.dryRun,
+    sandbox: { enabled: opts.sandbox !== false, profiles: [] },
     startedAt: localStamp(startedAt),
     startedAtUtc: startedAt.toISOString(),
     endedAt: null,
@@ -143,6 +149,26 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
   try {
     git.worktreeAdd(opts.target, paths.branch, paths.worktree, opts.base);
     event(`worktree created at ${paths.worktree} on ${paths.branch}`);
+
+    // Sandbox profiles use real paths (/tmp is /private/tmp on macOS).
+    const profiles = { claude: null, gate: null };
+    if (state.sandbox.enabled) {
+      const real = (p) => fs.realpathSync(p);
+      const common = {
+        home: real(os.homedir()),
+        worktree: real(paths.worktree),
+        target: real(opts.target),
+        tmpDirs: [...new Set([real(os.tmpdir()), real("/tmp")])],
+      };
+      for (const kind of ["claude", "gate"]) {
+        profiles[kind] = file(`sandbox-${kind}.sb`);
+        fs.writeFileSync(profiles[kind], buildProfile({ kind, ...common }));
+      }
+      state.sandbox.profiles = ["sandbox-claude.sb", "sandbox-gate.sb"];
+      event("sandbox profiles written");
+    } else {
+      event("WARNING: running without the sandbox; Claude and the gate have your full user permissions");
+    }
     writeReport();
 
     const install = opts.install ?? defaultInstall(paths.worktree);
@@ -156,7 +182,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
     event("install done");
 
     event("baseline gate started");
-    const baseline = await runGate(paths.worktree, file("baseline.gate.log"));
+    const baseline = await runGate(paths.worktree, file("baseline.gate.log"), profiles.gate);
     if (!baseline.ok) {
       state.setupLog = { title: "Baseline gate log", text: tailLines(readText(file("baseline.gate.log")), GATE_TAIL_LINES) };
       event("baseline red");
@@ -198,6 +224,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
           timeoutMs: opts.timeoutMinutes * 60 * 1000,
           stdoutFile: file(`${stem}.json`),
           stderrFile: file(`${stem}.stderr`),
+          profileFile: profiles.claude,
         });
         const claude = parseClaudeOutput(readText(file(`${stem}.json`)));
         if (claude.total_cost_usd !== null) s.costUsd = (s.costUsd ?? 0) + claude.total_cost_usd;
@@ -224,7 +251,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
             event(`step ${step.index} attempt ${attempt} unreviewable: ${unreviewable.join("; ")}`);
           } else {
             event("gate started");
-            const gate = await runGate(paths.worktree, file(`${stem}.gate.log`));
+            const gate = await runGate(paths.worktree, file(`${stem}.gate.log`), profiles.gate);
             // The gate runs code the attempt wrote, and that code can change files
             // too. Check scope and readability again on what will actually be committed.
             const afterGate = gate.ok ? git.changedPaths(paths.worktree) : [];

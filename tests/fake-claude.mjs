@@ -5,6 +5,7 @@
 //   FAKE_CLAUDE_PLAN   JSON array of actions, one per call; the last repeats.
 //                      { "do": "write", "path": "file", "content": "..." }
 //                      { "do": "stage", "path": "file", "content": "..." }  write, then git add
+//                      { "do": "copy", "from": "/abs/or/rel", "to": "file" }  read one file into another
 //                      { "do": "nothing" }
 //                      { "do": "sleep", "ms": 60000 }
 //                      { "do": "orphan", "path": "file", "ms": 1500 }  start a
@@ -33,10 +34,16 @@ fs.writeFileSync(path.join(stateDir, `env-${call}.json`), JSON.stringify({ LEARN
 
 const action = plan[Math.min(call, plan.length) - 1];
 
+// Paths resolve against the worktree, and absolute paths are used as given, so
+// a plan can try to reach outside the worktree.
 if (action.do === "write") {
-  const target = path.join(process.cwd(), action.path);
+  const target = path.resolve(process.cwd(), action.path);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, action.content ?? "");
+} else if (action.do === "copy") {
+  const to = path.resolve(process.cwd(), action.to);
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.writeFileSync(to, fs.readFileSync(path.resolve(process.cwd(), action.from)));
 } else if (action.do === "stage") {
   const { execFileSync } = await import("node:child_process");
   fs.writeFileSync(path.join(process.cwd(), action.path), action.content ?? "");

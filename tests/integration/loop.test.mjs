@@ -178,6 +178,74 @@ describe("build-loop against a throwaway repo", () => {
     expect(r.report).toContain("(https://example.com/me/target-app.git)");
   });
 
+  describe("sandbox", () => {
+    // Each case also runs with --no-sandbox, to prove the attempt would otherwise succeed.
+    const stepsAnyFile = `## Step 1: Anything\n\nDo it.\n`;
+
+    it("stops Claude writing into the target checkout", () => {
+      const target = makeTarget();
+      const escaped = path.join(target, "escaped.txt");
+      const sandboxed = runLoop(target, writeSteps(stepsAnyFile), { plan: [{ do: "write", path: escaped, content: "out\n" }], extra: ["--attempts", "1"] });
+      expect(sandboxed.code).toBe(1);
+      expect(fs.existsSync(escaped)).toBe(false);
+      expect(sandboxed.report).toContain("| Sandbox | on:");
+
+      spawnSync("sleep", ["1.1"]);
+      const open = runLoop(target, writeSteps(stepsAnyFile), { plan: [{ do: "write", path: escaped, content: "out\n" }], extra: ["--attempts", "1", "--no-sandbox"] });
+      expect(fs.existsSync(escaped)).toBe(true);
+      expect(open.report).toContain("| Sandbox | **off:");
+      expect(open.stdout).toContain("WARNING: running without the sandbox");
+    });
+
+    it("stops Claude reading a secret from the target checkout", () => {
+      const target = makeTarget();
+      fs.writeFileSync(path.join(target, ".env.local"), "TOKEN=hunter2\n");
+      fs.appendFileSync(path.join(target, ".git", "info", "exclude"), ".env.local\n");
+      const plan = [{ do: "copy", from: path.join(target, ".env.local"), to: "leak.txt" }];
+
+      const sandboxed = runLoop(target, writeSteps(stepsAnyFile), { plan, extra: ["--attempts", "1"] });
+      expect(sandboxed.code).toBe(1);
+      expect(sandboxed.report).toMatch(/\| failed \| 1 \|.*no changes/);
+      expect(sh(target, "git", ["log", "--all", "--format=%H", "--", "leak.txt"])).toBe("");
+
+      spawnSync("sleep", ["1.1"]);
+      const open = runLoop(target, writeSteps(stepsAnyFile), { plan, extra: ["--attempts", "1", "--no-sandbox"] });
+      expect(open.code).toBe(0);
+      expect(sh(target, "git", ["show", `${open.branch}:leak.txt`])).toBe("TOKEN=hunter2");
+    });
+
+    it("stops Claude changing installed dependencies", () => {
+      const target = makeTarget();
+      const plan = [{ do: "write", path: "node_modules/tool/index.js", content: "tampered\n" }];
+      const install = ["--install", "mkdir -p node_modules/tool && echo original > node_modules/tool/index.js"];
+      const toolIn = (r) => fs.readFileSync(path.join(r.report.match(/\| Worktree \| `([^`]+)` \|/)[1], "node_modules/tool/index.js"), "utf8");
+
+      const sandboxed = runLoop(target, writeSteps(stepsAnyFile), { plan, extra: ["--attempts", "1", ...install] });
+      expect(toolIn(sandboxed)).toBe("original\n");
+
+      spawnSync("sleep", ["1.1"]);
+      const open = runLoop(target, writeSteps(stepsAnyFile), { plan, extra: ["--attempts", "1", "--no-sandbox", ...install] });
+      expect(toolIn(open)).toBe("tampered\n");
+    });
+
+    it("runs the gate sandboxed too, so a test cannot write outside the worktree", () => {
+      const target = makeTarget();
+      const escaped = path.join(target, "from-the-gate.txt");
+      const check = `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(escaped)}, "gate was here\\n");\n`;
+      const plan = [{ do: "write", path: "check.mjs", content: check }];
+
+      const sandboxed = runLoop(target, writeSteps(stepsAnyFile), { plan, extra: ["--attempts", "1"] });
+      expect(sandboxed.code).toBe(1);
+      expect(sandboxed.report).toMatch(/\| failed \| 1 \|.*\| gate \|/);
+      expect(sandboxed.report).toContain("EPERM");
+      expect(fs.existsSync(escaped)).toBe(false);
+
+      spawnSync("sleep", ["1.1"]);
+      runLoop(target, writeSteps(stepsAnyFile), { plan, extra: ["--attempts", "1", "--no-sandbox"] });
+      expect(fs.existsSync(escaped)).toBe(true);
+    });
+  });
+
   it("retries a red step and feeds the gate log back into the next prompt", () => {
     const target = makeTarget();
     const r = runLoop(target, writeSteps(stepsGreen), {
