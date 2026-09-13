@@ -17,6 +17,10 @@ import { parseSteps } from "./steps.mjs";
 export class Refusal extends Error {}
 
 const clock = (d) => d.toTimeString().slice(0, 8);
+const pad = (n) => String(n).padStart(2, "0");
+// Local time for the report, for example 2026-09-12 21:39:47.
+export const localStamp = (d) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${clock(d)}`;
 const readText = (file) => {
   try {
     return fs.readFileSync(file, "utf8");
@@ -62,7 +66,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
     runDir: paths.runDir,
     model: opts.model,
     dryRun: opts.dryRun,
-    startedAt: startedAt.toISOString(),
+    startedAt: localStamp(startedAt),
     endedAt: null,
     outcome: "running",
     stopReason: null,
@@ -89,7 +93,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
   const finish = (outcome, stopReason, code) => {
     state.outcome = outcome;
     state.stopReason = stopReason;
-    state.endedAt = now().toISOString();
+    state.endedAt = localStamp(now());
     for (const s of state.steps) if (s.status === "pending" || s.status === "running") s.status = "skipped";
     writeReport();
     out(reportPath);
@@ -139,7 +143,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
 
     if (opts.dryRun) {
       for (const step of parsed.steps) {
-        const prompt = assemblePrompt({ preamble, context: parsed.context, step, attempt: 1, attempts: opts.attempts });
+        const prompt = assemblePrompt({ preamble, title: parsed.title, context: parsed.context, step, attempt: 1, attempts: opts.attempts });
         fs.writeFileSync(file(`step-${step.index}-attempt-1.prompt.md`), prompt);
         out(`===== step ${step.index} prompt (dry run) =====`);
         out(prompt);
@@ -156,7 +160,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
       for (let attempt = 1; attempt <= opts.attempts; attempt++) {
         s.attemptsUsed = attempt;
         const stem = `step-${step.index}-attempt-${attempt}`;
-        const prompt = assemblePrompt({ preamble, context: parsed.context, step, attempt, attempts: opts.attempts, previous });
+        const prompt = assemblePrompt({ preamble, title: parsed.title, context: parsed.context, step, attempt, attempts: opts.attempts, previous });
         fs.writeFileSync(file(`${stem}.prompt.md`), prompt);
         event(`step ${step.index} attempt ${attempt} started`);
 

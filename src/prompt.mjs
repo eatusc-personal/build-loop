@@ -32,9 +32,10 @@ function feedback({ attempt, attempts, previous }) {
   }
 }
 
-export function assemblePrompt({ preamble, context, step, attempt = 1, attempts = 1, previous = null }) {
+export function assemblePrompt({ preamble, title = null, context, step, attempt = 1, attempts = 1, previous = null }) {
   const parts = [preamble.trim()];
-  if (context) parts.push(`Context for every step:\n\n${context}`);
+  // Shared context from the top of the steps file, under the file's own title.
+  if (context) parts.push(`# ${title ?? "Context for every step"}\n\n${context}`);
   parts.push(`## ${step.heading}\n\n${step.body}`);
   if (step.doneWhen) parts.push(`DONE WHEN: ${step.doneWhen}`);
   if (step.allowed) {

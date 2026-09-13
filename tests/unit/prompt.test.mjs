@@ -11,17 +11,21 @@ const step = {
 
 describe("assemblePrompt", () => {
   it("orders preamble, context, step, DONE WHEN, and ALLOWED on the first attempt", () => {
-    const prompt = assemblePrompt({ preamble: "PREAMBLE", context: "CONTEXT", step, attempt: 1, attempts: 3 });
+    const prompt = assemblePrompt({ preamble: "PREAMBLE", title: "The plan", context: "CONTEXT", step, attempt: 1, attempts: 3 });
     expect(prompt).toBe(
       [
         "PREAMBLE",
-        "Context for every step:\n\nCONTEXT",
+        "# The plan\n\nCONTEXT",
         "## Step 1: Add PUT\n\nAdd a PUT handler.",
         "DONE WHEN: the gate is green",
         "You may only change these paths:\n\n- app/api/**\n- tests/unit/x.test.js",
       ].join("\n\n") + "\n"
     );
     expect(prompt).not.toContain("Attempt");
+  });
+
+  it("uses a generic heading for context when the file has no title", () => {
+    expect(assemblePrompt({ preamble: "P", context: "C", step })).toContain("P\n\n# Context for every step\n\nC\n\n## Step 1");
   });
 
   it("omits optional sections that are absent", () => {
