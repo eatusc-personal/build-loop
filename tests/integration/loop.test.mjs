@@ -272,6 +272,26 @@ describe("build-loop against a throwaway repo", () => {
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
+  it("kills background children a Claude process leaves behind", () => {
+    const target = makeTarget();
+    const r = runLoop(target, writeSteps(stepsGreen), {
+      plan: [{ do: "orphan", path: "late.md", ms: 2000 }],
+      extra: ["--attempts", "1"],
+    });
+    expect(r.report).toMatch(/\| failed \| 1 \|.*no changes/);
+    const late = fs.readFileSync(path.join(r.fakeState, "orphan-1.txt"), "utf8");
+    spawnSync("sleep", ["3"]);
+    expect(fs.existsSync(late)).toBe(false);
+  });
+
+  it("reports a Claude command that does not exist instead of crashing", () => {
+    const target = makeTarget();
+    const r = runLoop(target, writeSteps(stepsGreen), { extra: ["--attempts", "1", "--claude-cmd", path.join(tmp, "no-such-claude")] });
+    expect(r.stderr).not.toContain("EBADF");
+    expect(r.code).toBe(1);
+    expect(r.report).toMatch(/\| failed \| 1 \|.*no changes/);
+  });
+
   it("refuses to start from a red baseline without calling Claude", () => {
     const target = makeTarget({ status: "red" });
     const r = runLoop(target, writeSteps(stepsGreen), { plan: [{ do: "write", path: "status.txt", content: "green\n" }] });

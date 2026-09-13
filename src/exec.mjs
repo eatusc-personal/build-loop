@@ -48,6 +48,7 @@ export function runToFiles(cmd, args, { cwd, env, stdoutFile, stderrFile, timeou
     if (child.pid) active.add(child.pid);
 
     const killGroup = (signal) => {
+      if (!child.pid) return;
       try {
         process.kill(-child.pid, signal);
       } catch {
@@ -63,11 +64,17 @@ export function runToFiles(cmd, args, { cwd, env, stdoutFile, stderrFile, timeou
       }, timeoutMs);
     }
 
+    // Runs once: Node can emit both "error" and "close" for a failed spawn.
+    let finished = false;
     const finish = (code, signal, error) => {
-      active.delete(child.pid);
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       clearTimeout(killTimer);
-      if (timedOut) killGroup("SIGKILL");
+      // The top process is gone, but anything it started in the background is
+      // still in its process group. Kill the group every time, not only on timeout.
+      killGroup("SIGKILL");
+      active.delete(child.pid);
       fs.closeSync(out);
       if (err !== out) fs.closeSync(err);
       resolve({ code: error ? 127 : code, signal, timedOut, error: error ? error.message : null });

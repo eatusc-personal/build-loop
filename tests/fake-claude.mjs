@@ -6,6 +6,8 @@
 //                      { "do": "write", "path": "file", "content": "..." }
 //                      { "do": "nothing" }
 //                      { "do": "sleep", "ms": 60000 }
+//                      { "do": "orphan", "path": "file", "ms": 1500 }  start a
+//                        background child that writes the file later, then exit
 //   FAKE_CLAUDE_STATE  directory for the call counter and what each call saw:
 //                      prompt-<n>.txt, args-<n>.json, pid-<n>.txt
 //
@@ -34,6 +36,12 @@ if (action.do === "write") {
   const target = path.join(process.cwd(), action.path);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, action.content ?? "");
+} else if (action.do === "orphan") {
+  const { spawn } = await import("node:child_process");
+  const target = path.join(process.cwd(), action.path);
+  const code = `setTimeout(() => require("fs").writeFileSync(${JSON.stringify(target)}, "late\\n"), ${action.ms});`;
+  spawn(process.execPath, ["-e", code], { stdio: "ignore" }).unref();
+  fs.writeFileSync(path.join(stateDir, `orphan-${call}.txt`), target);
 } else if (action.do === "sleep") {
   await new Promise((resolve) => setTimeout(resolve, action.ms));
 }
