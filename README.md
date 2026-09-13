@@ -7,7 +7,7 @@ Node 20, zero runtime dependencies.
 ## The rules it keeps
 
 1. **The target owns the gate.** Pass or fail is the exit code of `npm run check` in the target repo. The runner never edits it and does not know what it runs.
-2. **Every run is isolated.** Each run gets its own worktree and `loop/<run-id>` branch cut from the base branch. Your checkout, its branch, and gitignored files such as `.env.local` are never touched or copied.
+2. **Every run is isolated.** Each run gets its own worktree and `loop/<run-id>` branch cut from the base branch, and the runner never touches your checkout or copies gitignored files such as `.env.local`. Code the agent writes also runs: its tests run when Claude calls `npm test` and when the gate runs. On macOS that code runs inside a sandbox that keeps it out of your checkout, your secrets, and the worktree's installed dependencies (see [Sandbox](#sandbox)).
 3. **Retries are bounded.** A step gets a fixed number of attempts and each Claude call has a wall-clock timeout. The run stops at the first step that uses up its attempts, because later steps build on earlier ones.
 4. **Only evidence counts.** A step lands when the working tree changed and the gate passed. What Claude says it did is saved but never used to decide anything, and the files listed in the report come from git.
 5. **Scope is declared and checked.** A step can list the paths it may change. Touching anything else fails the attempt before the gate even runs, which catches an agent working around a deny rule with the shell.
@@ -33,6 +33,8 @@ node bin/loop.mjs runs [--into <branch>]
                          assembled prompt instead
   --claude-cmd <path>    command to run instead of `claude`; also read
                          from env BUILD_LOOP_CLAUDE
+  --no-sandbox           run Claude and the gate without the macOS sandbox
+                         (not recommended)
 ```
 
 `npm link` in this folder puts `build-loop` on your PATH.
@@ -109,6 +111,26 @@ The prompt for an attempt is `src/preamble.md` (edit it freely, it is read at ru
 
 Claude runs in the worktree, so the target's `CLAUDE.md` and `.claude/settings.json` deny list apply. It runs with `--permission-mode dontAsk` and a fixed allow list: file reading and editing tools, `npm run check`, `npm test`, `npx vitest`, `npx eslint`, and read-only `git diff`, `git status`, `git log`, `ls`, and `cat`. Anything else is denied without prompting. `LEARNING_LOOP=0` is set so a target's opt-in Stop hook does not run the gate a second time.
 
+The allow list decides which tools Claude may call. It does not limit what those tools run: `npm test` and `npm run check` execute whatever tests Claude wrote. That is what the sandbox is for.
+
+## Sandbox
+
+On macOS, the Claude session and every gate run go through `sandbox-exec` with a Seatbelt profile (the mechanism Claude Code's own sandbox uses). The profiles are written into the run folder as `sandbox-claude.sb` and `sandbox-gate.sb`, so you can read exactly what applied to a run.
+
+| | Allowed | Denied |
+| --- | --- | --- |
+| Writes | the worktree, temp folders, npm debug logs; for the Claude session, its own state in `~/.claude` | everything else under your home folder, the target checkout (including its `.git`), the worktree's `node_modules` (vite caches excepted) and its `.git` pointer file; for Claude, `~/.claude` settings, hooks, agents, skills, commands, plugins, and memory |
+| Reads | the worktree, the target's `.git` (git needs it), everything not listed as denied | `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker`, `~/.kube`, `~/.netrc`, `~/.npmrc`, `~/.git-credentials`, any `.env*` file outside the worktree, and the target checkout's files |
+
+The install command runs before any agent code exists and stays outside the sandbox. A run refuses to start if `sandbox-exec` is missing (for example on Linux) unless you pass `--no-sandbox`; the report flags a run made that way.
+
+What the sandbox does not cover:
+
+- **Network.** Claude needs the API, and the sandbox allows all network access. Code that reads something it is allowed to read could send it somewhere.
+- **Other readable files.** Source in other folders under your home, and anything not on the deny list, can still be read.
+- **The macOS Keychain.** It stays readable because the Claude CLI keeps its login there.
+- **Anything outside macOS.** For a stronger boundary, run the loop as a separate macOS user with no access to your repositories or secrets, or in a VM.
+
 ## Reading a report
 
 The runner prints one timestamped line per event, then the report path and the branch name as the last two lines. The report has:
@@ -124,12 +146,13 @@ Read the report, then the diff, then decide. Per-attempt prompts, Claude JSON ou
 
 - Merge, push, or open a pull request.
 - Edit the gate or decide pass or fail any other way.
-- Touch your checkout, its branch, or its uncommitted work.
+- Touch your checkout, its branch, or its uncommitted work, or let sandboxed agent code do so.
 - Copy gitignored files such as `.env.local` into the worktree.
 - Start from a red baseline, since it could not tell its failures from inherited ones.
 - Land a change git cannot show as a text diff.
 - Delete run history.
 - Use `--dangerously-skip-permissions`.
+- Run without the sandbox unless you ask for it with `--no-sandbox`.
 
 ## Development
 
