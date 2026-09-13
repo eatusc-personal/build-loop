@@ -181,6 +181,54 @@ describe("build-loop against a throwaway repo", () => {
     expect(sh(target, "git", ["rev-list", "--count", `main..${r.branch}`])).toBe("0");
   });
 
+  it("fails an attempt that leaves a raw NUL byte in a .js file before the gate runs", () => {
+    const target = makeTarget();
+    const r = runLoop(target, writeSteps(stepsGreen), {
+      plan: [
+        { do: "write", path: "notes/key.js", content: "export const key = (a, b) => `${a}\u0000${b}`;\n" },
+        { do: "write", path: "notes/key.js", content: "export const key = (a, b) => JSON.stringify([a, b]);\n" },
+      ],
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.calls).toBe(2);
+    expect(fs.existsSync(path.join(r.runDir, "step-1-attempt-1.gate.log"))).toBe(false);
+    expect(r.stdout).toContain("step 1 attempt 1 unreviewable: notes/key.js line 1 (0x00)");
+    const second = fs.readFileSync(path.join(r.fakeState, "prompt-2.txt"), "utf8");
+    expect(second).toContain("cannot show as a text diff");
+    expect(second).toContain("- notes/key.js line 1 (0x00)");
+    expect(r.report).toMatch(/\| 1 \| Step 1: Make it green \| landed \| 2 \|/);
+    const state = JSON.parse(fs.readFileSync(path.join(r.runDir, "state.json"), "utf8"));
+    expect(state.steps[0].attempts[0].reason).toBe("unreviewable");
+  });
+
+  it("reports unreviewable as the failure reason when every attempt leaves a control character", () => {
+    const target = makeTarget();
+    const r = runLoop(target, writeSteps(stepsGreen), {
+      plan: [{ do: "write", path: "notes/colors.md", content: "red is \u001b[31m\n" }],
+      extra: ["--attempts", "1"],
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.report).toMatch(/\| failed \| 1 \|.*unreviewable: notes\/colors.md line 1 \(0x1b\) \|/);
+  });
+
+  it("lets an attempt land that removes a stray byte from an existing file", () => {
+    const target = makeTarget();
+    fs.mkdirSync(path.join(target, "notes"));
+    fs.writeFileSync(path.join(target, "notes/old.js"), "export const k = `a\u0000b`;\n");
+    sh(target, "git", ["add", "-A"]);
+    sh(target, "git", ["commit", "-q", "-m", "a file git sees as binary"]);
+
+    const r = runLoop(target, writeSteps(stepsGreen), {
+      plan: [{ do: "write", path: "notes/old.js", content: "export const k = JSON.stringify([\"a\", \"b\"]);\n" }],
+      extra: ["--attempts", "1"],
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.report).toMatch(/\| 1 \| Step 1: Make it green \| landed \| 1 \|/);
+  });
+
   it("kills and reports a Claude call that runs past the timeout", () => {
     const target = makeTarget();
     const r = runLoop(target, writeSteps(stepsGreen), {

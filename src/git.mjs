@@ -94,6 +94,13 @@ export function discardChanges(worktree) {
   gitOk(worktree, ["clean", "-fd"]);
 }
 
+// Git's binary verdict on a file's current content, by diffing it against an
+// empty file. `--numstat` prints "-\t-" for binary content.
+export function isBinaryForGit(worktree, file) {
+  const r = git(worktree, ["diff", "--no-index", "--numstat", "--", "/dev/null", file]);
+  return /^-\t-\t/.test(r.stdout);
+}
+
 export const listWorktrees = (target) => parseWorktreeList(gitOk(target, ["worktree", "list", "--porcelain"]));
 export const isAncestor = (dir, ref, base) => git(dir, ["merge-base", "--is-ancestor", ref, base]).code === 0;
 export const worktreeRemove = (target, worktreePath) => gitOk(target, ["worktree", "remove", "--force", worktreePath]);

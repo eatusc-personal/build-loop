@@ -21,6 +21,8 @@ function feedback({ attempt, attempts, previous }) {
   switch (previous.reason) {
     case "scope":
       return `${head} It changed files outside the allowed paths, so it failed before the gate ran. Revert or move these changes:\n\n${previous.paths.map((p) => `- ${p}`).join("\n")}`;
+    case "unreviewable":
+      return `${head} It left content that git cannot show as a text diff, so it failed before the gate ran. Use printable characters, or an escape sequence such as \\u0000 inside a string, in these files:\n\n${previous.paths.map((p) => `- ${p}`).join("\n")}`;
     case "no changes":
       return `${head} It changed no files, so it failed. The step needs a change in the working tree.`;
     case "timeout":

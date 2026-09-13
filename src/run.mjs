@@ -10,6 +10,7 @@ import { defaultInstall, hasCheckScript, runGate, runInstall } from "./gate.mjs"
 import * as git from "./git.mjs";
 import { outOfScope } from "./glob.mjs";
 import { runId, runPaths } from "./paths.mjs";
+import { checkReviewable } from "./reviewable.mjs";
 import { assemblePrompt, loadPreamble, tailLines } from "./prompt.mjs";
 import { GATE_TAIL_LINES, renderReport } from "./report.mjs";
 import { parseSteps } from "./steps.mjs";
@@ -180,6 +181,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
         s.attempts.push(record);
 
         let failure = null;
+        let unreviewable = [];
         if (proc.timedOut) {
           failure = { reason: "timeout" };
           event(`step ${step.index} attempt ${attempt} timed out after ${opts.timeoutMinutes} min`);
@@ -192,6 +194,9 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
           } else if (outside.length) {
             failure = { reason: "scope", paths: outside };
             event(`step ${step.index} attempt ${attempt} out of scope: ${outside.join(", ")}`);
+          } else if ((unreviewable = checkReviewable(paths.worktree, changed)).length) {
+            failure = { reason: "unreviewable", paths: unreviewable };
+            event(`step ${step.index} attempt ${attempt} unreviewable: ${unreviewable.join("; ")}`);
           } else {
             event("gate started");
             const gate = await runGate(paths.worktree, file(`${stem}.gate.log`));
@@ -211,7 +216,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
         if (failure) {
           record.reason = failure.reason;
           record.paths = failure.paths ?? [];
-          s.reason = failure.paths ? `scope: ${failure.paths.join(", ")}` : failure.reason;
+          s.reason = failure.paths ? `${failure.reason}: ${failure.paths.join(failure.reason === "scope" ? ", " : "; ")}` : failure.reason;
           previous = failure;
         }
         writeReport();
