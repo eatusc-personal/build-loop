@@ -6,6 +6,7 @@ import path from "node:path";
 
 export const USAGE = `build-loop --target <abs path> --steps <file> [options]
 build-loop clean --target <abs path> [--base <branch>]
+build-loop runs [--into <branch>]
 
   --base <branch>        branch to cut from            default: main
   --attempts <n>         attempts per step             default: 3
@@ -32,6 +33,7 @@ const OPTIONS = {
   "continue-on-fail": { type: "boolean" },
   "dry-run": { type: "boolean" },
   "claude-cmd": { type: "string" },
+  into: { type: "string" },
   help: { type: "boolean", short: "h" },
 };
 
@@ -58,9 +60,12 @@ export function parseCli(argv, env = {}) {
   if (values.help) return { command: "help" };
 
   const command = positionals[0] ?? "run";
-  if (!["run", "clean"].includes(command) || positionals.length > 1) {
+  if (!["run", "clean", "runs"].includes(command) || positionals.length > 1) {
     throw new Error(`unknown command "${positionals.join(" ")}"`);
   }
+
+  // runs: rebuild the run index; decisions are checked against --into.
+  if (command === "runs") return { command, into: values.into ?? "main" };
 
   if (!values.target) throw new Error("--target is required");
   if (!path.isAbsolute(values.target)) throw new Error("--target must be an absolute path");

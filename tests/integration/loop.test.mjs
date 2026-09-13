@@ -387,6 +387,46 @@ ALLOWED: three.txt
     expect(sh(target, "git", ["log", "--format=%s", "main"]).split("\n").filter((l) => l.startsWith("loop: "))).toHaveLength(3);
   });
 
+  it("indexes runs and tells taken, pending, discarded, and nothing-to-take apart", () => {
+    const target = makeTarget();
+    const home = path.join(tmp, "state");
+    const runs = (machine = "test-machine") => {
+      const r = spawnSync("node", [BIN, "runs"], { encoding: "utf8", env: { ...process.env, BUILD_LOOP_HOME: home, BUILD_LOOP_MACHINE: machine } });
+      expect(r.status).toBe(0);
+      const rows = fs.readFileSync(path.join(home, "runs.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      return { stdout: r.stdout, byRun: Object.fromEntries(rows.map((row) => [row.runId, row])) };
+    };
+
+    const dry = runLoop(target, writeSteps(stepsGreen), { extra: ["--dry-run"] });
+    spawnSync("sleep", ["1.1"]);
+    const kept = runLoop(target, writeSteps(stepsGreen), { plan: [{ do: "write", path: "notes/kept.md", content: "k\n" }] });
+    spawnSync("sleep", ["1.1"]);
+    const tossed = runLoop(target, writeSteps(stepsGreen), { plan: [{ do: "write", path: "notes/tossed.md", content: "t\n" }] });
+    const id = (r) => r.branch.replace("loop/", "");
+
+    let index = runs();
+    expect(index.byRun[id(dry)].decision).toBe("nothing to take");
+    expect(index.byRun[id(kept)].decision).toBe("pending");
+    expect(index.byRun[id(tossed)].decision).toBe("pending");
+    expect(index.byRun[id(kept)].key).toBe(`test-machine/target-app/${id(kept)}`);
+    expect(index.stdout).toContain("3 run(s) indexed on test-machine; decisions checked against main");
+
+    // Take one, discard the other the way the report says to.
+    sh(target, "git", ["merge", "-q", "--ff-only", kept.branch]);
+    const tossedWorktree = tossed.report.match(/\| Worktree \| `([^`]+)` \|/)[1];
+    sh(target, "git", ["worktree", "remove", "--force", tossedWorktree]);
+    sh(target, "git", ["branch", "-D", tossed.branch]);
+
+    index = runs();
+    expect(index.byRun[id(kept)]).toMatchObject({ decision: "taken", decisionDetail: "in main" });
+    expect(index.byRun[id(tossed)]).toMatchObject({ decision: "discarded", decisionDetail: "branch deleted without merging" });
+    expect(index.stdout).toMatch(new RegExp(`${id(kept)}\\s+test-machine\\s+target-app\\s+all steps landed\\s+1/1\\s+\\$0\\.01\\s+taken`));
+
+    // Indexed from another machine, the decision is not guessed.
+    index = runs("somewhere-else");
+    expect(index.byRun[id(kept)]).toMatchObject({ decision: "unknown", decidedOn: "somewhere-else" });
+  });
+
   it("dry-runs without calling Claude, then clean removes the merged worktree and keeps unmerged ones", () => {
     const target = makeTarget();
     const dry = runLoop(target, writeSteps(threeSteps), { extra: ["--dry-run"] });

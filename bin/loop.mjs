@@ -2,6 +2,7 @@
 import { parseCli, USAGE } from "../src/args.mjs";
 import { clean } from "../src/clean.mjs";
 import { Refusal, runLoop } from "../src/run.mjs";
+import { runsCommand } from "../src/runs.mjs";
 
 async function main() {
   let opts;
@@ -18,6 +19,10 @@ async function main() {
   }
 
   try {
+    if (opts.command === "runs") {
+      runsCommand(opts);
+      return 0;
+    }
     if (opts.command === "clean") {
       clean(opts);
       return 0;

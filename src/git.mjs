@@ -101,6 +101,8 @@ export function isBinaryForGit(worktree, file) {
   return /^-\t-\t/.test(r.stdout);
 }
 
+export const commitExists = (dir, hash) => git(dir, ["cat-file", "-e", `${hash}^{commit}`]).code === 0;
+
 export const listWorktrees = (target) => parseWorktreeList(gitOk(target, ["worktree", "list", "--porcelain"]));
 export const isAncestor = (dir, ref, base) => git(dir, ["merge-base", "--is-ancestor", ref, base]).code === 0;
 export const worktreeRemove = (target, worktreePath) => gitOk(target, ["worktree", "remove", "--force", worktreePath]);
