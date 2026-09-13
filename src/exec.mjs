@@ -24,15 +24,18 @@ export function sweepMarked(marker) {
 // Children started by runToFiles that have not exited yet. They run in their
 // own process groups, so a Ctrl-C on the runner does not reach them; the
 // runner's signal handler calls killActive() instead.
-const active = new Set();
+const active = new Map(); // pid -> marker
 
+// Used by the runner's signal handler: kill each active child's process group
+// and sweep its marker, the same cleanup a normal exit gets.
 export function killActive(signal = "SIGKILL") {
-  for (const pid of active) {
+  for (const [pid, marker] of active) {
     try {
       process.kill(-pid, signal);
     } catch {
       // Already gone.
     }
+    sweepMarked(marker);
   }
 }
 
@@ -63,7 +66,7 @@ export function runToFiles(cmd, args, { cwd, env, stdoutFile, stderrFile, timeou
       detached: true,
       stdio: ["ignore", out, err],
     });
-    if (child.pid) active.add(child.pid);
+    if (child.pid) active.set(child.pid, marker);
 
     const killGroup = (signal) => {
       if (!child.pid) return;

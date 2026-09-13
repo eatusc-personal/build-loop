@@ -14,7 +14,8 @@ import { childEnv } from "./env.mjs";
 import { runId, runPaths, stateRoot } from "./paths.mjs";
 import { collectProvenance } from "./provenance.mjs";
 import { checkReviewable } from "./reviewable.mjs";
-import { buildProfile, sandboxAvailable } from "./sandbox.mjs";
+import { buildProfile, darwinUserDirs, sandboxAvailable } from "./sandbox.mjs";
+import { execFileSync } from "node:child_process";
 import { assemblePrompt, loadPreamble, tailLines } from "./prompt.mjs";
 import { GATE_TAIL_LINES, renderReport } from "./report.mjs";
 import { parseSteps } from "./steps.mjs";
@@ -44,6 +45,10 @@ export function preflight(opts) {
   const stepsText = fs.readFileSync(opts.steps, "utf8");
   const parsed = parseSteps(stepsText);
   if (parsed.steps.length === 0) throw new Refusal(`steps file has no steps (no "## " headings): ${opts.steps}`);
+  const emptyAllowed = parsed.steps.find((s) => Array.isArray(s.allowed) && s.allowed.length === 0);
+  if (emptyAllowed) {
+    throw new Refusal(`step ${emptyAllowed.index} has an ALLOWED: line with no paths; list the paths it may change, or remove the line to allow any`);
+  }
   if (git.isDirty(opts.target)) throw new Refusal(`target has uncommitted changes; commit or stash them first: ${opts.target}`);
   if (!git.branchExists(opts.target, opts.base)) throw new Refusal(`base branch does not exist: ${opts.base}`);
   if (!hasCheckScript(git.showFile(opts.target, opts.base, "package.json") ?? "")) {
@@ -127,6 +132,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
     state.endedAt = localStamp(ended);
     state.endedAtUtc = ended.toISOString();
     for (const s of state.steps) if (s.status === "pending" || s.status === "running") s.status = "skipped";
+    fs.rmSync(runTmp, { recursive: true, force: true });
     writeReport();
     out(reportPath);
     out(paths.branch);
@@ -143,8 +149,12 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
 
   const npmCache = path.join(stateRoot(env), "npm-cache");
   fs.mkdirSync(npmCache, { recursive: true });
+  // A temp folder of this run's own. Children get it as TMPDIR, and the sandbox
+  // allows it by path, so the runner's own TMPDIR never decides what is writable.
+  const runTmp = path.join(stateRoot(env), "tmp", id);
+  fs.mkdirSync(runTmp, { recursive: true });
   // Children get an allowlisted environment, never a copy of the runner's.
-  const baseEnv = childEnv(env, { npm_config_cache: npmCache });
+  const baseEnv = childEnv(env, { npm_config_cache: npmCache, TMPDIR: runTmp });
   const setupChanges = () => git.changedPaths(paths.worktree);
 
   const onSignal = (signal) => {
@@ -170,7 +180,10 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
         home: real(os.homedir()),
         worktree: real(paths.worktree),
         target: real(opts.target),
-        tmpDirs: [...new Set([real(os.tmpdir()), real("/tmp")])],
+        tmpDirs: [
+          real(runTmp),
+          ...darwinUserDirs({ getconf: (name) => execFileSync("getconf", [name], { encoding: "utf8" }), realpath: real }),
+        ],
         npmCache: real(npmCache),
       };
       for (const kind of ["install", "claude", "gate"]) {
@@ -207,6 +220,9 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
       return finish("refused", `install changed files in the worktree (${changedByInstall.join(", ")}); commit them to ${opts.base} or pass a different --install`, 1);
     }
 
+    // Same rule as before every step's gate: ignored files outside node_modules
+    // (anything install produced besides dependencies) are removed first.
+    git.cleanIgnored(paths.worktree);
     event("baseline gate started");
     const baseline = await runGate(paths.worktree, file("baseline.gate.log"), {
       profileFile: profiles.gate,

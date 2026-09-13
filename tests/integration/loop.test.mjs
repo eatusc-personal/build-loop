@@ -384,6 +384,59 @@ describe("build-loop against a throwaway repo", () => {
       expect(fs.existsSync(late)).toBe(false);
     });
 
+    it("ignores the runner's TMPDIR: children get a per-run temp folder and cannot write the old one", () => {
+      const wide = fs.mkdtempSync(path.join(os.homedir(), ".build-loop-test-wide-tmp-"));
+      try {
+        const target = makeTarget();
+        const r = runLoop(target, writeSteps(stepsAnyFile), {
+          plan: [{ do: "write", path: path.join(wide, "escaped.txt"), content: "x\n" }],
+          extra: ["--attempts", "1"],
+          stateEnv: { TMPDIR: wide },
+        });
+        expect(fs.existsSync(path.join(wide, "escaped.txt"))).toBe(false);
+        const seen = JSON.parse(fs.readFileSync(path.join(r.fakeState, "env-1.json"), "utf8"));
+        expect(seen.TMPDIR).toBe(path.join(tmp, "state", "tmp", r.branch.replace("loop/", "")));
+        expect(fs.readFileSync(path.join(r.runDir, "sandbox-gate.sb"), "utf8")).not.toContain(wide);
+        expect(fs.existsSync(seen.TMPDIR)).toBe(false);
+      } finally {
+        fs.rmSync(wide, { recursive: true, force: true });
+      }
+    });
+
+    it("cleans ignored files before the baseline gate, so install cannot plant a green baseline", () => {
+      const target = makeTarget({ status: "red" });
+      const r = runLoop(target, writeSteps(stepsGreen), { extra: ["--install", "mkdir -p cache && echo yes > cache/pass"] });
+      expect(r.code).toBe(1);
+      expect(r.calls).toBe(0);
+      expect(r.report).toContain("Outcome: **refused**. baseline red");
+    });
+
+    it("refuses a step with an empty ALLOWED line", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps("## Step 1: Nothing listed\n\nDo it.\n\nALLOWED:\n"));
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain("step 1 has an ALLOWED: line with no paths");
+    });
+
+    it("kills detached children when the runner is interrupted", async () => {
+      const target = makeTarget();
+      const home = path.join(tmp, "state");
+      const fakeState = path.join(tmp, "fake-int");
+      fs.mkdirSync(fakeState, { recursive: true });
+      const { spawn } = await import("node:child_process");
+      const plan = [{ do: "multi", actions: [{ do: "orphan", path: "late.md", ms: 4000, detached: true }, { do: "sleep", ms: 60000 }] }];
+      const runner = spawn("node", [BIN, "--target", target, "--steps", writeSteps(stepsGreen), "--install", "true", "--claude-cmd", FAKE, "--attempts", "1"], {
+        env: { ...process.env, BUILD_LOOP_HOME: home, BUILD_LOOP_MACHINE: "test-machine", BUILD_LOOP_PASS_ENV: "FAKE_CLAUDE_STATE,FAKE_CLAUDE_PLAN", FAKE_CLAUDE_STATE: fakeState, FAKE_CLAUDE_PLAN: JSON.stringify(plan) },
+        stdio: "ignore",
+      });
+      for (let i = 0; i < 150 && !fs.existsSync(path.join(fakeState, "orphan-1.txt")); i++) await new Promise((r) => setTimeout(r, 100));
+      const late = fs.readFileSync(path.join(fakeState, "orphan-1.txt"), "utf8");
+      runner.kill("SIGINT");
+      await new Promise((resolve) => runner.on("exit", resolve));
+      await new Promise((r) => setTimeout(r, 5000));
+      expect(fs.existsSync(late)).toBe(false);
+    });
+
     it("cuts the worktree from the recorded base commit", () => {
       const target = makeTarget();
       const r = runLoop(target, writeSteps(stepsGreen), { plan: [{ do: "write", path: "notes/x.md", content: "x\n" }] });

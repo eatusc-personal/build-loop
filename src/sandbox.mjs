@@ -12,8 +12,29 @@ export const sandboxAvailable = () => process.platform === "darwin" && fs.exists
 
 // Seatbelt string literal.
 const q = (s) => `"${String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-// Seatbelt regex literal for an exact path prefix.
-const rx = (s) => String(s).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+// Regex metacharacters in a path, escaped for an exact match.
+const rx = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// A (regex ...) filter. The pattern goes in an ordinary string literal, not the
+// #"..." raw form, because a raw literal cannot contain a double quote.
+const re = (pattern) => `(regex ${q(pattern)})`;
+
+// macOS per-user temp and cache folders, which system tools use no matter
+// what TMPDIR says. Accepted only in their standard /private/var/folders shape,
+// so an unusual environment can never widen the sandbox to something like $HOME.
+const DARWIN_USER_DIR = /^\/private\/var\/folders\/[A-Za-z0-9_+-]{2}\/[A-Za-z0-9_+-]+\/[TC]$/;
+
+export function darwinUserDirs({ getconf, realpath }) {
+  const dirs = [];
+  for (const name of ["DARWIN_USER_TEMP_DIR", "DARWIN_USER_CACHE_DIR"]) {
+    try {
+      const real = realpath(String(getconf(name)).trim().replace(/\/$/, ""));
+      if (DARWIN_USER_DIR.test(real)) dirs.push(real);
+    } catch {
+      // Not macOS, or getconf failed: nothing added.
+    }
+  }
+  return dirs;
+}
 
 // Secrets under the home folder that nothing in a run needs to read.
 export const SECRET_PATHS = [
@@ -100,8 +121,8 @@ export function buildProfile({ kind, home, worktree, target, tmpDirs = [], npmCa
       ";; Not the configuration that would change later sessions, including",
       ";; ~/.claude.json, which holds per-project permissions and MCP servers.",
       ...CLAUDE_CONFIG_PATHS.map((p) => `(deny file-write* (subpath ${q(path.join(home, p))}))`),
-      `(deny file-write* (regex #"^${rx(path.join(home, ".claude"))}\\.json"))`,
-      `(deny file-write* (regex #"^${rx(path.join(home, ".claude", "projects"))}/[^/]+/memory(/|$)"))`
+      `(deny file-write* ${re(`^${rx(path.join(home, ".claude.json"))}`)})`,
+      `(deny file-write* ${re(`^${rx(path.join(home, ".claude", "projects"))}/[^/]+/memory(/|$)`)})`
     );
   }
 
@@ -110,8 +131,8 @@ export function buildProfile({ kind, home, worktree, target, tmpDirs = [], npmCa
     ";; Reads: no secrets, no .env files outside the worktree, and none of the",
     ";; target checkout except its git directory, which the worktree needs.",
     ...SECRET_PATHS.map((p) => `(deny file-read* (subpath ${q(path.join(home, p))}))`),
-    `(deny file-read* (regex #"/\\.env[^/]*$"))`,
-    `(allow file-read* file-read-data (regex #"^${rx(worktree)}/"))`,
+    `(deny file-read* ${re("/\\.env[^/]*$")})`,
+    `(allow file-read* file-read-data ${re(`^${rx(worktree)}/`)})`,
     ";; Path lookups in the target stay allowed (git resolves the worktree through it).",
     `(deny file-read-data (subpath ${q(target)}))`,
     ";; Named operations outrank file-read* in Seatbelt, so the git allow names file-read-data too.",

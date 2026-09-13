@@ -69,7 +69,9 @@ function parseStepBody(lines) {
   return {
     body: trimBlankLines(body),
     doneWhen: doneWhen || null,
-    allowed: allowed && allowed.length ? allowed : null,
+    // A present but empty ALLOWED: stays [] so preflight can refuse it; only a
+    // missing trailer means any path may change.
+    allowed,
   };
 }
 

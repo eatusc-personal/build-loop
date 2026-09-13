@@ -130,6 +130,12 @@ ALLOWED: docs/**
     expect(steps[0]).toMatchObject({ body: "Body", allowed: ["a.js"] });
   });
 
+  it("keeps a present but empty ALLOWED as an empty list, and a missing one as null", () => {
+    const { steps } = parseSteps("## Empty\nBody\nALLOWED:\n\n## Missing\nBody\n");
+    expect(steps[0].allowed).toEqual([]);
+    expect(steps[1].allowed).toBeNull();
+  });
+
   it("does not take a level-3 heading as a step", () => {
     const { steps } = parseSteps("## Step\n### Sub\ntext\n");
     expect(steps).toHaveLength(1);

@@ -33,7 +33,7 @@ fs.writeFileSync(path.join(stateDir, `args-${call}.json`), JSON.stringify(args))
 fs.writeFileSync(path.join(stateDir, `pid-${call}.txt`), String(process.pid));
 fs.writeFileSync(
   path.join(stateDir, `env-${call}.json`),
-  JSON.stringify({ LEARNING_LOOP: process.env.LEARNING_LOOP ?? null, SECRET_TOKEN: process.env.SECRET_TOKEN ?? null, keys: Object.keys(process.env).sort() })
+  JSON.stringify({ LEARNING_LOOP: process.env.LEARNING_LOOP ?? null, SECRET_TOKEN: process.env.SECRET_TOKEN ?? null, TMPDIR: process.env.TMPDIR ?? null, keys: Object.keys(process.env).sort() })
 );
 
 const action = plan[Math.min(call, plan.length) - 1];
