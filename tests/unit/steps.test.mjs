@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseSteps } from "../../src/steps.mjs";
 
@@ -140,18 +139,5 @@ ALLOWED: docs/**
     const { steps } = parseSteps("## Step\n### Sub\ntext\n");
     expect(steps).toHaveLength(1);
     expect(steps[0].body).toBe("### Sub\ntext");
-  });
-
-  it("parses the real drill-log-merge steps file when present", () => {
-    const file = "/Users/ericlai/Sites/localhost/learning-app/docs/loop/steps/drill-log-merge.md";
-    if (!fs.existsSync(file)) return;
-    const parsed = parseSteps(fs.readFileSync(file, "utf8"));
-    expect(parsed.steps.map((s) => s.index)).toEqual([1, 2, 3]);
-    expect(parsed.context).toMatch(/^Context for every step/);
-    expect(parsed.steps[0].allowed).toEqual([
-      "app/api/interview-drill/log/route.js",
-      "tests/unit/interview-drill-log-route.test.js",
-    ]);
-    expect(parsed.steps.every((s) => s.doneWhen && !s.body.includes("ALLOWED:"))).toBe(true);
   });
 });

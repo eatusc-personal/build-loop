@@ -83,7 +83,7 @@ A loop branch only exists on the machine that made it, so run `build-loop runs` 
 ## Steps file format
 
 ```markdown
-# Interview Drill log: merge instead of replace
+# Activity log: merge instead of replace
 
 Anything between the title and the first step is shared context,
 sent with every step.
@@ -96,7 +96,7 @@ or trailer lines inside a code block are left alone.
 DONE WHEN: `npm run check` is green and the four new test cases exist.
 This can run over several lines.
 
-ALLOWED: app/api/interview-drill/log/route.js, tests/unit/interview-drill-*.test.js
+ALLOWED: app/api/activity/log/route.js, tests/unit/activity-*.test.js
 
 ## Step 2: Log the change
 

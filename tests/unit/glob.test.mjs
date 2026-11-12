@@ -9,15 +9,15 @@ describe("matchesAny", () => {
   });
 
   it("keeps * inside one path segment", () => {
-    expect(matchesAny("tests/unit/interview-drill-log.test.js", ["tests/unit/interview-drill-*.test.js"])).toBe(true);
-    expect(matchesAny("tests/unit/deep/interview-drill-x.test.js", ["tests/unit/interview-drill-*.test.js"])).toBe(false);
+    expect(matchesAny("tests/unit/activity-log.test.js", ["tests/unit/activity-*.test.js"])).toBe(true);
+    expect(matchesAny("tests/unit/deep/activity-x.test.js", ["tests/unit/activity-*.test.js"])).toBe(false);
     expect(matchesAny("src/a.js", ["*.js"])).toBe(false);
   });
 
   it("lets ** cross directories, including zero of them", () => {
-    expect(matchesAny("app/api/interview-drill/log/route.js", ["app/api/interview-drill/**"])).toBe(true);
-    expect(matchesAny("app/api/interview-drill/route.js", ["app/api/interview-drill/**"])).toBe(true);
-    expect(matchesAny("app/api/notes/route.js", ["app/api/interview-drill/**"])).toBe(false);
+    expect(matchesAny("app/api/activity/log/route.js", ["app/api/activity/**"])).toBe(true);
+    expect(matchesAny("app/api/activity/route.js", ["app/api/activity/**"])).toBe(true);
+    expect(matchesAny("app/api/notes/route.js", ["app/api/activity/**"])).toBe(false);
     expect(matchesAny("route.js", ["**/route.js"])).toBe(true);
     expect(matchesAny("a/b/c/route.js", ["**/route.js"])).toBe(true);
     expect(matchesAny("a/b/c/route.js", ["a/**/route.js"])).toBe(true);
@@ -44,7 +44,7 @@ describe("outOfScope", () => {
 
   it("returns the paths that match no pattern", () => {
     expect(
-      outOfScope(["components/InterviewDrill.jsx", "docs/log.md", "lib/projects.js"], ["components/InterviewDrill.jsx", "docs/**"])
+      outOfScope(["components/ActivityLog.jsx", "docs/log.md", "lib/projects.js"], ["components/ActivityLog.jsx", "docs/**"])
     ).toEqual(["lib/projects.js"]);
   });
 });
