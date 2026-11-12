@@ -21,10 +21,10 @@ describe("resolveMachine", () => {
       resolveMachine({
         env: { BUILD_LOOP_MACHINE: "" },
         home: "/Users/me",
-        hostname: "erics-MacBook-Pro-2.local",
+        hostname: "laptop.local",
         readFile: files({ "/Users/me/code/agent-library/.machine": "laptop\n" }),
       })
-    ).toEqual({ name: "laptop", source: "/Users/me/code/agent-library/.machine", hostname: "erics-MacBook-Pro-2.local" });
+    ).toEqual({ name: "laptop", source: "/Users/me/code/agent-library/.machine", hostname: "laptop.local" });
   });
 
   it("honors BUILD_LOOP_MACHINE_FILE and takes only the first word", () => {
