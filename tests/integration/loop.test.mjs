@@ -395,7 +395,8 @@ describe("build-loop against a throwaway repo", () => {
       expect(fs.existsSync(escaped)).toBe(true);
     });
 
-    it("denies writes outside the home folder and to ~/.claude.json", () => {
+    // Needs sandbox-exec, which only macOS has.
+    it.runIf(process.platform === "darwin")("denies writes outside the home folder and to ~/.claude.json", () => {
       const tag = `build-loop-test-${process.pid}-${Date.now()}`;
       const shared = fs.existsSync("/Users/Shared") ? path.join("/Users/Shared", `${tag}.txt`) : null;
       const claudeJson = path.join(os.homedir(), `.claude.json.${tag}`);
@@ -403,10 +404,20 @@ describe("build-loop against a throwaway repo", () => {
       const writes = [{ do: "write", path: claudeJson, content: "{}\n" }];
       if (shared) writes.unshift({ do: "write", path: shared, content: "x\n" });
       try {
+        let calls = 0;
         for (const w of writes) {
-          runLoop(target, writeSteps(stepsAnyFile), { plan: [w], extra: ["--attempts", "1"] });
+          const sandboxed = runLoop(target, writeSteps(stepsAnyFile), { plan: [w], extra: ["--attempts", "1"] });
+          // The fake Claude ran and attempted the write; the sandbox refused it.
+          expect(sandboxed.calls, w.path).toBe(++calls);
+          expect(sandboxed.report).toContain("| Sandbox | on:");
+          expect(fs.readFileSync(path.join(sandboxed.runDir, "step-1-attempt-1.stderr"), "utf8"), w.path).toContain("EPERM");
           expect(fs.existsSync(w.path), w.path).toBe(false);
-          spawnSync("sleep", ["1.1"]);
+
+          // Control: the same payload without the sandbox does write the file.
+          const open = runLoop(target, writeSteps(stepsAnyFile), { plan: [w], extra: ["--attempts", "1", "--no-sandbox"] });
+          expect(open.calls, w.path).toBe(++calls);
+          expect(fs.existsSync(w.path), w.path).toBe(true);
+          fs.rmSync(w.path, { force: true });
         }
       } finally {
         for (const w of writes) fs.rmSync(w.path, { force: true });
