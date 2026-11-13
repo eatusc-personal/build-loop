@@ -10,6 +10,7 @@ import { killActive } from "./exec.mjs";
 import { defaultInstall, hasCheckScript, runGate, runInstall } from "./gate.mjs";
 import * as git from "./git.mjs";
 import { outOfScope } from "./glob.mjs";
+import { gateChanges } from "./gateguard.mjs";
 import { childEnv } from "./env.mjs";
 import { runId, runPaths, stateRoot } from "./paths.mjs";
 import { collectProvenance } from "./provenance.mjs";
@@ -81,6 +82,8 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
     // Resolved once. The worktree is cut from this exact commit and the review
     // commands use it, so a base branch that moves later cannot change either.
     baseCommit: git.revParse(opts.target, `${opts.base}^{commit}`),
+    // PROTECTED: globs from the steps file, checked with the gate scripts.
+    protectedPaths: parsed.protected,
     branch: paths.branch,
     worktree: paths.worktree,
     runDir: paths.runDir,
@@ -109,6 +112,14 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
       attempts: [],
     })),
   };
+
+  // The gate as the base commit defines it. An attempt that changes it fails,
+  // whatever ALLOWED says, so the agent cannot weaken what authorizes its commit.
+  const baseGate = {
+    packageJson: git.showFile(opts.target, state.baseCommit, "package.json"),
+    npmrc: git.showFile(opts.target, state.baseCommit, ".npmrc"),
+  };
+  const gateTouched = (changed) => gateChanges(paths.worktree, { base: baseGate, changed, protect: parsed.protected });
 
   // Whether the target's checked-out branch can fast-forward to this run's
   // branch right now. Recomputed on every write, since the checkout can move
@@ -247,7 +258,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
 
     if (opts.dryRun) {
       for (const step of parsed.steps) {
-        const prompt = assemblePrompt({ preamble, title: parsed.title, context: parsed.context, step, attempt: 1, attempts: opts.attempts });
+        const prompt = assemblePrompt({ preamble, title: parsed.title, context: parsed.context, step, attempt: 1, attempts: opts.attempts, protect: parsed.protected });
         fs.writeFileSync(file(`step-${step.index}-attempt-1.prompt.md`), prompt);
         out(`===== step ${step.index} prompt (dry run) =====`);
         out(prompt);
@@ -264,7 +275,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
       for (let attempt = 1; attempt <= opts.attempts; attempt++) {
         s.attemptsUsed = attempt;
         const stem = `step-${step.index}-attempt-${attempt}`;
-        const prompt = assemblePrompt({ preamble, title: parsed.title, context: parsed.context, step, attempt, attempts: opts.attempts, previous });
+        const prompt = assemblePrompt({ preamble, title: parsed.title, context: parsed.context, step, attempt, attempts: opts.attempts, previous, protect: parsed.protected });
         fs.writeFileSync(file(`${stem}.prompt.md`), prompt);
         event(`step ${step.index} attempt ${attempt} started`);
 
@@ -289,6 +300,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
 
         let failure = null;
         let unreviewable = [];
+        let tampered = [];
         if (proc.timedOut) {
           failure = { reason: "timeout" };
           event(`step ${step.index} attempt ${attempt} timed out after ${opts.timeoutMinutes} min`);
@@ -298,6 +310,9 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
           if (changed.length === 0) {
             failure = { reason: "no changes" };
             event(`step ${step.index} attempt ${attempt} changed nothing`);
+          } else if ((tampered = gateTouched(changed)).length) {
+            failure = { reason: "gate changed", paths: tampered };
+            event(`step ${step.index} attempt ${attempt} changed the gate: ${tampered.join(", ")}`);
           } else if (outside.length) {
             failure = { reason: "scope", paths: outside };
             event(`step ${step.index} attempt ${attempt} out of scope: ${outside.join(", ")}`);
@@ -318,9 +333,13 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
             // The gate runs code the attempt wrote, and that code can change files
             // too. Check scope and readability again on what will actually be committed.
             const afterGate = gate.ok ? git.changedPaths(paths.worktree) : [];
-            const outsideAfter = gate.ok ? outOfScope(afterGate, step.allowed) : [];
-            const unreviewableAfter = gate.ok && !outsideAfter.length ? checkReviewable(paths.worktree, afterGate) : [];
-            if (gate.ok && outsideAfter.length) {
+            const tamperedAfter = gate.ok ? gateTouched(afterGate) : [];
+            const outsideAfter = gate.ok && !tamperedAfter.length ? outOfScope(afterGate, step.allowed) : [];
+            const unreviewableAfter = gate.ok && !tamperedAfter.length && !outsideAfter.length ? checkReviewable(paths.worktree, afterGate) : [];
+            if (gate.ok && tamperedAfter.length) {
+              failure = { reason: "gate changed", paths: tamperedAfter };
+              event(`step ${step.index} attempt ${attempt} changed the gate during the gate run: ${tamperedAfter.join(", ")}`);
+            } else if (gate.ok && outsideAfter.length) {
               failure = { reason: "scope", paths: outsideAfter };
               event(`step ${step.index} attempt ${attempt} out of scope after the gate: ${outsideAfter.join(", ")}`);
             } else if (gate.ok && unreviewableAfter.length) {
@@ -347,7 +366,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
         if (failure) {
           record.reason = failure.reason;
           record.paths = failure.paths ?? [];
-          s.reason = failure.paths ? `${failure.reason}: ${failure.paths.join(failure.reason === "scope" ? ", " : "; ")}` : failure.reason;
+          s.reason = failure.paths ? `${failure.reason}: ${failure.paths.join(failure.reason === "unreviewable" ? "; " : ", ")}` : failure.reason;
           previous = failure;
         }
         writeReport();

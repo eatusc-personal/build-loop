@@ -26,7 +26,7 @@ Do the second thing.
   });
 
   it("returns no steps and no context for an empty file", () => {
-    expect(parseSteps("")).toEqual({ title: null, context: null, steps: [] });
+    expect(parseSteps("")).toEqual({ title: null, context: null, protected: [], steps: [] });
     expect(parseSteps("# Only a title\n\nsome prose\n").steps).toEqual([]);
   });
 

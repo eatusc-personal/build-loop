@@ -6,7 +6,7 @@ Node 20, zero runtime dependencies.
 
 ## The rules it keeps
 
-1. **The target owns the gate.** Pass or fail is the exit code of `npm run check` in the target repo. The runner never edits it and does not know what it runs.
+1. **The target owns the gate.** Pass or fail is the exit code of `npm run check` in the target repo. The runner never edits it. An attempt that changes the gate's definition fails before its gate result can count, checked before the gate and again after it, against the run's base commit and whatever `ALLOWED:` says. Enforced: the `check` script in `package.json`, its `precheck` and `postcheck` scripts, and every script it reaches (a word in a reached script that names another script, such as `npm run lint`, `npm test`, or `run-s types`, followed transitively, with their pre and post scripts); the repo-root `.npmrc`; and any path matching a `PROTECTED:` line in the steps file. Not enforced unless listed under `PROTECTED:`: the files those scripts run, such as test files, a check script, or lint and test configuration. Script globs such as `run-s lint:*` are not expanded, so scripts reached only that way are not compared.
 2. **Every run is isolated.** Each run gets its own worktree and `loop/<run-id>` branch cut from the base commit, and the runner never touches your checkout or copies gitignored files such as `.env.local`. Code the agent writes also runs: its tests run when Claude calls `npm test` and when the gate runs, and with `--base` on a loop branch its install scripts run too. On macOS all of that runs inside a sandbox that limits writes to the worktree and a few named folders, keeps the target checkout and listed secret files unreadable, and gets an allowlisted environment instead of yours. The sandbox has limits; read [Sandbox](#sandbox) before relying on it.
 3. **Retries are bounded.** A step gets a fixed number of attempts. Each Claude call, the install, and each gate run have a wall-clock limit. The run stops at the first step that uses up its attempts, because later steps build on earlier ones.
 4. **Only evidence counts.** A step lands when the working tree changed and the gate passed. What Claude says it did is saved but never used to decide anything, and the files listed in the report come from git.
@@ -106,10 +106,11 @@ ALLOWED: app/api/activity/log/route.js, tests/unit/activity-*.test.js
 - Each `## ` heading is a step. Steps run in file order, and the heading becomes the commit subject as `loop: <heading>`.
 - `DONE WHEN:` is appended to the prompt as the finish line. Optional.
 - `ALLOWED:` is a comma-separated list of globs relative to the repo root (`*` within a path segment, `**` across directories, `?` for one character). If present, every changed tracked or untracked file must match one (ignored files are removed before the gate instead). If absent, any file may change.
+- `PROTECTED:` in the shared context (before the first step) is a comma-separated list of globs no step may change, for the files the gate runs, for example `PROTECTED: eslint.config.mjs, vitest.config.mjs, tests/**`. It may appear more than once. A change to a matching path fails the attempt with `gate changed`, even when `ALLOWED:` lists it. The list is sent with every prompt and removed from the shared context text.
 
 ## What Claude is given
 
-The prompt for an attempt is `src/preamble.md` (edit it freely, it is read at run time), then the shared context, the step, `DONE WHEN`, and the allowed paths. From the second attempt on it also gets the last 60 lines of the failed gate log, or the list of out-of-scope or unreviewable files, or a note that the last attempt changed nothing or timed out. The previous attempt's changes stay in the tree.
+The prompt for an attempt is `src/preamble.md` (edit it freely, it is read at run time), then the shared context, the step, `DONE WHEN`, and the allowed paths. From the second attempt on it also gets the last 60 lines of the failed gate log, or the list of out-of-scope or unreviewable files, or what it changed in the gate, or a note that the last attempt changed nothing or timed out. The previous attempt's changes stay in the tree.
 
 Claude runs in the worktree, so the target's `CLAUDE.md` and `.claude/settings.json` deny list apply. It runs with `--permission-mode dontAsk` and a fixed allow list: file reading and editing tools, `npm run check`, `npm test`, `npx vitest`, `npx eslint`, and read-only `git diff`, `git status`, `git log`, `ls`, and `cat`. Anything else is denied without prompting. `LEARNING_LOOP=0` is set so a target's opt-in Stop hook does not run the gate a second time.
 
@@ -148,7 +149,7 @@ What the sandbox does not cover:
 The runner prints one timestamped line per event, then the report path and the branch name as the last two lines. The report has:
 
 - the outcome: `all steps landed`, `stopped`, `finished with failures`, `failed` (the install command exited non-zero or timed out), `refused` (the baseline gate was red or timed out, or install or the baseline changed files in the worktree), `dry run`, `interrupted`, or `error`; plus the base commit, branch, worktree, model, times, and total cost;
-- one row per step: `landed`, `failed`, or `skipped`, attempts used, turns and cost summed across attempts (a dash when the CLI did not report them), the failure reason (`gate`, `gate timeout`, `scope: <paths>`, `unreviewable: <file and line>`, `no changes`, `timeout`), the commit, and the files changed with line counts;
+- one row per step: `landed`, `failed`, or `skipped`, attempts used, turns and cost summed across attempts (a dash when the CLI did not report them), the failure reason (`gate`, `gate timeout`, `gate changed: <what>`, `scope: <paths>`, `unreviewable: <file and line>`, `no changes`, `timeout`), the commit, and the files changed with line counts;
 - the last 40 lines of the gate log for a failed step, or of the baseline or install log if the run never started;
 - **Review it**, **Take it**, and **Discard it** commands. **Take it** is worked out from the target's checked-out branch when the report is written: `git merge --ff-only` if that branch can fast-forward to the run's branch, a plain `git merge` if it has moved on since.
 
@@ -157,7 +158,7 @@ Read the report, then the diff, then decide. Per-attempt prompts, Claude JSON ou
 ## What it will not do
 
 - Merge, push, or open a pull request.
-- Edit the gate or decide pass or fail any other way.
+- Edit the gate or decide pass or fail any other way, or land an attempt that changed the gate scripts, `.npmrc`, or a `PROTECTED:` path.
 - Touch your checkout, its branch, or its uncommitted work. Sandboxed agent code cannot write it or read its files either.
 - Copy gitignored files such as `.env.local` into the worktree.
 - Start from a red baseline, since it could not tell its failures from inherited ones.
@@ -174,4 +175,4 @@ Read the report, then the diff, then decide. Per-attempt prompts, Claude JSON ou
 npm test
 ```
 
-Unit tests cover argument parsing, steps-file parsing, glob matching, prompt assembly, the control-character scan, output parsing, report rendering, machine resolution, and run summaries and decisions. Integration tests run `bin/loop.mjs` end to end against throwaway git repos with `tests/fake-claude.mjs` in place of the Claude CLI. The real `claude` is never run by the tests.
+Unit tests cover argument parsing, steps-file parsing, glob matching, gate protection, prompt assembly, the control-character scan, output parsing, report rendering, machine resolution, and run summaries and decisions. Integration tests run `bin/loop.mjs` end to end against throwaway git repos with `tests/fake-claude.mjs` in place of the Claude CLI. The real `claude` is never run by the tests.

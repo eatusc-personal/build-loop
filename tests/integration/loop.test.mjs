@@ -446,6 +446,47 @@ describe("build-loop against a throwaway repo", () => {
     });
   });
 
+  describe("gate protection", () => {
+    const stepsAnyFile = `## Step 1: Anything\n\nDo it.\n`;
+    const pkgWith = (check) => JSON.stringify({ name: "target-app", private: true, scripts: { check, dev: "node dev.mjs" } }, null, 2);
+
+    it("fails an attempt that replaces scripts.check, even with no ALLOWED list", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsAnyFile), {
+        plan: [{ do: "multi", actions: [{ do: "write", path: "package.json", content: pkgWith("true") }, { do: "write", path: "status.txt", content: "red\n" }] }],
+        extra: ["--attempts", "2"],
+      });
+      expect(r.code).toBe(1);
+      expect(r.calls).toBe(2);
+      expect(r.stdout).toContain("step 1 attempt 1 changed the gate: package.json scripts.check");
+      expect(r.report).toMatch(/\| failed \| 2 \|.*gate changed: package.json scripts.check \|/);
+      expect(fs.existsSync(path.join(r.runDir, "step-1-attempt-1.gate.log"))).toBe(false);
+      const second = fs.readFileSync(path.join(r.fakeState, "prompt-2.txt"), "utf8");
+      expect(second).toContain("It changed the gate");
+      expect(second).toContain("- package.json scripts.check");
+      expect(sh(target, "git", ["rev-list", "--count", `main..${r.branch}`])).toBe("0");
+    });
+
+    it("still lands a package.json change that leaves the gate scripts alone", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsAnyFile), { plan: [{ do: "write", path: "package.json", content: pkgWith("node check.mjs") }] });
+      expect(r.code).toBe(0);
+      expect(sh(target, "git", ["diff", "--name-only", `main..${r.branch}`])).toBe("package.json");
+    });
+
+    it("fails an attempt that changes a PROTECTED path from the steps file", () => {
+      const target = makeTarget();
+      const steps = `# Run\n\nPROTECTED: check.mjs\n\n## Step 1: Anything\n\nDo it.\n`;
+      const r = runLoop(target, writeSteps(steps), {
+        plan: [{ do: "multi", actions: [{ do: "write", path: "check.mjs", content: "process.exit(0);\n" }, { do: "write", path: "status.txt", content: "red\n" }] }],
+        extra: ["--attempts", "1"],
+      });
+      expect(r.code).toBe(1);
+      expect(r.report).toMatch(/\| failed \| 1 \|.*gate changed: check.mjs \|/);
+      expect(fs.readFileSync(path.join(r.fakeState, "prompt-1.txt"), "utf8")).toContain("These paths are part of the gate. Changing any of them fails the attempt:\n\n- check.mjs");
+    });
+  });
+
   it("retries a red step and feeds the gate log back into the next prompt", () => {
     const target = makeTarget();
     const r = runLoop(target, writeSteps(stepsGreen), {

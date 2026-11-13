@@ -5,7 +5,9 @@
 // optional level-1 title) is shared context sent with every step. Inside a
 // step, a line starting with `DONE WHEN:` or `ALLOWED:` begins a trailer that
 // runs until the next trailer or the end of the step. Headings and trailers
-// inside fenced code blocks are ordinary text.
+// inside fenced code blocks are ordinary text. In the shared context, a line
+// starting with `PROTECTED:` lists globs no step may change (see gateguard.mjs);
+// it is taken out of the context text. It may appear more than once.
 
 // A fence opens with 3+ backticks or tildes and closes only on a line of the
 // same character, at least as long, with nothing else after it (CommonMark).
@@ -32,6 +34,7 @@ function fenceTracker() {
 const STEP_HEADING = /^##\s+(.+?)\s*#*\s*$/;
 const TITLE_HEADING = /^#\s+(.+?)\s*#*\s*$/;
 const TRAILER = /^(DONE WHEN|ALLOWED):\s?(.*)$/;
+const PROTECTED = /^PROTECTED:\s?(.*)$/;
 
 function trimBlankLines(lines) {
   let start = 0;
@@ -79,6 +82,7 @@ export function parseSteps(markdown) {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   let title = null;
   const contextLines = [];
+  const protectedPaths = [];
   const rawSteps = [];
   const inFence = fenceTracker();
 
@@ -94,13 +98,16 @@ export function parseSteps(markdown) {
       continue;
     }
     const titleMatch = !fenced && title === null && contextLines.every((l) => l.trim() === "") && TITLE_HEADING.exec(line);
+    const protectMatch = !fenced && PROTECTED.exec(line);
     if (titleMatch) title = titleMatch[1];
+    else if (protectMatch) protectedPaths.push(...protectMatch[1].split(",").map((p) => p.trim()).filter(Boolean));
     else contextLines.push(line);
   }
 
   return {
     title,
     context: trimBlankLines(contextLines) || null,
+    protected: protectedPaths,
     steps: rawSteps.map((s, i) => ({ index: i + 1, heading: s.heading, ...parseStepBody(s.lines) })),
   };
 }
