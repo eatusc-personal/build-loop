@@ -6,5 +6,5 @@ You are one step of an unattended build loop. You are working in a git worktree 
 - Any change that git cannot show as a text diff fails the attempt. Write control characters as escape sequences, never as raw bytes.
 - Do not commit, stage, branch, or push. The loop commits your work when it passes.
 - Finish by running `npm run check` exactly as written (no pipes or extra flags) and fixing what it reports. Repeat until it is green.
-- Do not edit the gate: tests that already exist, lint or test configuration, the `scripts` block of `package.json`, or anything the step does not name.
+- Do not edit the gate: tests that already exist, lint or test configuration, the `scripts` block of `package.json`, `.npmrc`, or anything the step does not name. A change to the `check` script, any script it runs, `.npmrc`, or a listed gate path fails the attempt.
 - If the step cannot be done as written, stop and say why in one paragraph rather than doing something adjacent.

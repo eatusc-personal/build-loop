@@ -59,6 +59,8 @@ if (status.includes("spill-control")) {
 } else if (status.includes("spill")) {
   fs.writeFileSync("gate-output.txt", "made by the gate\\n");
 }
+// "revert" makes the gate undo the attempt's only change.
+if (status.includes("revert")) fs.writeFileSync("status.txt", "green\\n");
 if (status.includes("red")) {
   console.log("CHECK SAYS RED MARKER");
   process.exit(1);
@@ -135,7 +137,7 @@ describe("build-loop against a throwaway repo", () => {
 
     expect(r.stderr).toBe("");
     expect(r.code).toBe(0);
-    expect(r.branch).toMatch(/^loop\/\d{8}-\d{6}$/);
+    expect(r.branch).toMatch(/^loop\/\d{8}-\d{6}-[0-9a-f]{6}$/);
     expect(sh(target, "git", ["log", "-1", "--format=%s", r.branch])).toBe("loop: Step 1: Make it green");
     expect(sh(target, "git", ["diff", "--name-only", `main..${r.branch}`])).toBe("notes/a.md");
     expect(r.report).toMatch(/\| 1 \| Step 1: Make it green \| landed \| 1 \|/);
@@ -155,6 +157,44 @@ describe("build-loop against a throwaway repo", () => {
     expect(prompt).toContain("You may only change these paths:\n\n- status.txt\n- notes/**");
     expect(JSON.parse(fs.readFileSync(path.join(r.fakeState, "env-1.json"), "utf8")).LEARNING_LOOP).toBe("0");
     expect(JSON.parse(fs.readFileSync(path.join(r.fakeState, "args-1.json"), "utf8"))).toContain("dontAsk");
+  });
+
+  it("runs two same-named targets started together without sharing a run id, temp folder, or worktree", async () => {
+    const { spawn } = await import("node:child_process");
+    const home = path.join(tmp, "state");
+    const start = (target, n) => {
+      const fakeState = path.join(tmp, `fake-${n}`);
+      fs.mkdirSync(fakeState, { recursive: true });
+      const child = spawn("node", [BIN, "--target", target, "--steps", writeSteps(stepsGreen), "--install", "true", "--claude-cmd", FAKE], {
+        env: {
+          ...process.env,
+          BUILD_LOOP_HOME: home,
+          BUILD_LOOP_MACHINE: "test-machine",
+          BUILD_LOOP_PASS_ENV: "FAKE_CLAUDE_STATE,FAKE_CLAUDE_PLAN",
+          FAKE_CLAUDE_STATE: fakeState,
+          FAKE_CLAUDE_PLAN: JSON.stringify([{ do: "write", path: `notes/${n}.md`, content: `${n}\n` }]),
+        },
+      });
+      let stdout = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      return new Promise((resolve) => child.on("exit", (code) => resolve({ code, stdout, fakeState })));
+    };
+    // Same folder name in two places: the run folders are keyed by that name.
+    const targets = ["a", "b"].map((side) => {
+      const parent = path.join(tmp, side);
+      fs.mkdirSync(parent);
+      const t = makeTarget();
+      fs.renameSync(t, path.join(parent, "target-app"));
+      return path.join(parent, "target-app");
+    });
+    const [one, two] = await Promise.all([start(targets[0], "one"), start(targets[1], "two")]);
+    expect(one.code).toBe(0);
+    expect(two.code).toBe(0);
+    const branchOf = (r) => r.stdout.trim().split("\n").at(-1);
+    expect(branchOf(one)).not.toBe(branchOf(two));
+    expect(fs.readdirSync(path.join(home, "runs", "target-app"))).toHaveLength(2);
+    const tmpOf = (r) => JSON.parse(fs.readFileSync(path.join(r.fakeState, "env-1.json"), "utf8")).TMPDIR;
+    expect(tmpOf(one)).not.toBe(tmpOf(two));
   });
 
   it("records where the run happened and snapshots the steps file", () => {
@@ -355,7 +395,8 @@ describe("build-loop against a throwaway repo", () => {
       expect(fs.existsSync(escaped)).toBe(true);
     });
 
-    it("denies writes outside the home folder and to ~/.claude.json", () => {
+    // Needs sandbox-exec, which only macOS has.
+    it.runIf(process.platform === "darwin")("denies writes outside the home folder and to ~/.claude.json", () => {
       const tag = `build-loop-test-${process.pid}-${Date.now()}`;
       const shared = fs.existsSync("/Users/Shared") ? path.join("/Users/Shared", `${tag}.txt`) : null;
       const claudeJson = path.join(os.homedir(), `.claude.json.${tag}`);
@@ -363,10 +404,20 @@ describe("build-loop against a throwaway repo", () => {
       const writes = [{ do: "write", path: claudeJson, content: "{}\n" }];
       if (shared) writes.unshift({ do: "write", path: shared, content: "x\n" });
       try {
+        let calls = 0;
         for (const w of writes) {
-          runLoop(target, writeSteps(stepsAnyFile), { plan: [w], extra: ["--attempts", "1"] });
+          const sandboxed = runLoop(target, writeSteps(stepsAnyFile), { plan: [w], extra: ["--attempts", "1"] });
+          // The fake Claude ran and attempted the write; the sandbox refused it.
+          expect(sandboxed.calls, w.path).toBe(++calls);
+          expect(sandboxed.report).toContain("| Sandbox | on:");
+          expect(fs.readFileSync(path.join(sandboxed.runDir, "step-1-attempt-1.stderr"), "utf8"), w.path).toContain("EPERM");
           expect(fs.existsSync(w.path), w.path).toBe(false);
-          spawnSync("sleep", ["1.1"]);
+
+          // Control: the same payload without the sandbox does write the file.
+          const open = runLoop(target, writeSteps(stepsAnyFile), { plan: [w], extra: ["--attempts", "1", "--no-sandbox"] });
+          expect(open.calls, w.path).toBe(++calls);
+          expect(fs.existsSync(w.path), w.path).toBe(true);
+          fs.rmSync(w.path, { force: true });
         }
       } finally {
         for (const w of writes) fs.rmSync(w.path, { force: true });
@@ -443,6 +494,47 @@ describe("build-loop against a throwaway repo", () => {
       const state = JSON.parse(fs.readFileSync(path.join(r.runDir, "state.json"), "utf8"));
       expect(sh(target, "git", ["rev-parse", `${r.branch}~1`])).toBe(state.baseCommit);
       expect(r.report).toContain(`diff ${state.baseCommit}..${r.branch}`);
+    });
+  });
+
+  describe("gate protection", () => {
+    const stepsAnyFile = `## Step 1: Anything\n\nDo it.\n`;
+    const pkgWith = (check) => JSON.stringify({ name: "target-app", private: true, scripts: { check, dev: "node dev.mjs" } }, null, 2);
+
+    it("fails an attempt that replaces scripts.check, even with no ALLOWED list", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsAnyFile), {
+        plan: [{ do: "multi", actions: [{ do: "write", path: "package.json", content: pkgWith("true") }, { do: "write", path: "status.txt", content: "red\n" }] }],
+        extra: ["--attempts", "2"],
+      });
+      expect(r.code).toBe(1);
+      expect(r.calls).toBe(2);
+      expect(r.stdout).toContain("step 1 attempt 1 changed the gate: package.json scripts.check");
+      expect(r.report).toMatch(/\| failed \| 2 \|.*gate changed: package.json scripts.check \|/);
+      expect(fs.existsSync(path.join(r.runDir, "step-1-attempt-1.gate.log"))).toBe(false);
+      const second = fs.readFileSync(path.join(r.fakeState, "prompt-2.txt"), "utf8");
+      expect(second).toContain("It changed the gate");
+      expect(second).toContain("- package.json scripts.check");
+      expect(sh(target, "git", ["rev-list", "--count", `main..${r.branch}`])).toBe("0");
+    });
+
+    it("still lands a package.json change that leaves the gate scripts alone", () => {
+      const target = makeTarget();
+      const r = runLoop(target, writeSteps(stepsAnyFile), { plan: [{ do: "write", path: "package.json", content: pkgWith("node check.mjs") }] });
+      expect(r.code).toBe(0);
+      expect(sh(target, "git", ["diff", "--name-only", `main..${r.branch}`])).toBe("package.json");
+    });
+
+    it("fails an attempt that changes a PROTECTED path from the steps file", () => {
+      const target = makeTarget();
+      const steps = `# Run\n\nPROTECTED: check.mjs\n\n## Step 1: Anything\n\nDo it.\n`;
+      const r = runLoop(target, writeSteps(steps), {
+        plan: [{ do: "multi", actions: [{ do: "write", path: "check.mjs", content: "process.exit(0);\n" }, { do: "write", path: "status.txt", content: "red\n" }] }],
+        extra: ["--attempts", "1"],
+      });
+      expect(r.code).toBe(1);
+      expect(r.report).toMatch(/\| failed \| 1 \|.*gate changed: check.mjs \|/);
+      expect(fs.readFileSync(path.join(r.fakeState, "prompt-1.txt"), "utf8")).toContain("These paths are part of the gate. Changing any of them fails the attempt:\n\n- check.mjs");
     });
   });
 
@@ -584,6 +676,21 @@ describe("build-loop against a throwaway repo", () => {
     expect(sh(target, "git", ["rev-list", "--count", `main..${r.branch}`])).toBe("0");
   });
 
+  it("retries with no changes when the gate removes the attempt's only change", () => {
+    const target = makeTarget();
+    const r = runLoop(target, writeSteps(stepsGreen), {
+      plan: [{ do: "write", path: "status.txt", content: "green revert\n" }, { do: "write", path: "notes/real.md", content: "real\n" }],
+    });
+    expect(r.stdout).not.toContain("error:");
+    expect(r.stdout).toContain("step 1 attempt 1 has no changes left after the gate");
+    expect(r.code).toBe(0);
+    expect(r.calls).toBe(2);
+    expect(fs.readFileSync(path.join(r.fakeState, "prompt-2.txt"), "utf8")).toContain("changed no files");
+    const state = JSON.parse(fs.readFileSync(path.join(r.runDir, "state.json"), "utf8"));
+    expect(state.steps[0].attempts[0].reason).toBe("no changes");
+    expect(sh(target, "git", ["diff", "--name-only", `main..${r.branch}`])).toBe("notes/real.md");
+  });
+
   it("kills background children a Claude process leaves behind", () => {
     const target = makeTarget();
     const r = runLoop(target, writeSteps(stepsGreen), {
@@ -596,13 +703,22 @@ describe("build-loop against a throwaway repo", () => {
     expect(fs.existsSync(late)).toBe(false);
   });
 
-  it("reports a Claude command that does not exist instead of crashing", () => {
-    const target = makeTarget();
-    const r = runLoop(target, writeSteps(stepsGreen), { extra: ["--attempts", "1", "--claude-cmd", path.join(tmp, "no-such-claude")] });
-    expect(r.stderr).not.toContain("EBADF");
-    expect(r.code).toBe(1);
-    expect(r.report).toMatch(/\| failed \| 1 \|.*no changes/);
-  });
+  for (const sandbox of [true, false]) {
+    it(`stops at once with the launch error when the Claude command does not exist (${sandbox ? "sandboxed" : "no sandbox"})`, () => {
+      const target = makeTarget();
+      const missing = path.join(tmp, "no-such-claude");
+      const r = runLoop(target, writeSteps(stepsGreen), { extra: ["--attempts", "3", "--continue-on-fail", "--claude-cmd", missing, ...(sandbox ? [] : ["--no-sandbox"])] });
+      expect(r.stderr).not.toContain("EBADF");
+      expect(r.code).toBe(1);
+      expect(r.report).toContain("Outcome: **failed**. Claude could not be started:");
+      expect(r.report).toContain(missing);
+      expect(r.report).toMatch(/\| 1 \| Step 1: Make it green \| failed \| 1 \|.*launch error: .*(ENOENT|No such file)/);
+      const state = JSON.parse(fs.readFileSync(path.join(r.runDir, "state.json"), "utf8"));
+      expect(state.steps[0].attempts).toHaveLength(1);
+      expect(state.steps[0].attempts[0].reason).toBe("launch error");
+      expect(state.steps[0].attempts[0].launchError).toMatch(/ENOENT|No such file/);
+    });
+  }
 
   it("refuses to start from a red baseline without calling Claude", () => {
     const target = makeTarget({ status: "red" });

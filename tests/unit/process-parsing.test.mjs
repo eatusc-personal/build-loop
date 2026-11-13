@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALLOWED_TOOLS, buildClaudeArgs, parseClaudeOutput } from "../../src/claude.mjs";
+import { ALLOWED_TOOLS, buildClaudeArgs, launchError, parseClaudeOutput } from "../../src/claude.mjs";
 import { hasCheckScript } from "../../src/gate.mjs";
 import { parseNumstat, parseStatusZ, parseWorktreeList } from "../../src/git.mjs";
 
@@ -84,5 +84,20 @@ describe("hasCheckScript", () => {
     expect(hasCheckScript('{"scripts":{"test":"vitest"}}')).toBe(false);
     expect(hasCheckScript('{"scripts":{"check":"  "}}')).toBe(false);
     expect(hasCheckScript("not json")).toBe(false);
+  });
+});
+
+describe("launchError", () => {
+  it("reports a spawn error, with its code", () => {
+    expect(launchError({ cmd: "/x/claude", error: "spawn /x/claude ENOENT", errorCode: "ENOENT" })).toBe("/x/claude: spawn /x/claude ENOENT");
+    expect(launchError({ cmd: "claude", error: "bad", errorCode: "EACCES" })).toBe("claude: EACCES bad");
+  });
+
+  it("reads sandbox-exec's own exec failure, and nothing else", () => {
+    const stderr = "sandbox-exec: execvp() of '/x/claude' failed: No such file or directory\n";
+    expect(launchError({ cmd: "/x/claude", code: 71, stderr })).toBe("/x/claude: No such file or directory");
+    expect(launchError({ cmd: "/x/claude", code: 1, stderr })).toBeNull();
+    expect(launchError({ cmd: "/x/claude", code: 71, stderr: "some other failure\n" })).toBeNull();
+    expect(launchError({ cmd: "/x/claude", code: 0 })).toBeNull();
   });
 });

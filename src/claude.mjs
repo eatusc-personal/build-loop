@@ -1,5 +1,6 @@
 // The Claude CLI invocation. buildClaudeArgs and parseClaudeOutput are pure.
 
+import fs from "node:fs";
 import { runToFiles, run } from "./exec.mjs";
 import { wrap } from "./sandbox.mjs";
 
@@ -79,6 +80,18 @@ export function claudeVersion(cmd = "claude") {
   return r.code === 0 ? r.stdout.trim() || "unknown" : null;
 }
 
+// Why the Claude command never started, or null if it did. Pure.
+// Unsandboxed, spawn itself fails (for example ENOENT). Sandboxed, spawn starts
+// sandbox-exec, which exits 71 after printing why it could not exec the command.
+export function launchError({ cmd, error = null, errorCode = null, code = null, stderr = "" }) {
+  if (error) return errorCode && !error.includes(errorCode) ? `${cmd}: ${errorCode} ${error}` : `${cmd}: ${error}`;
+  if (code === 71) {
+    const m = /^sandbox-exec: execvp\(\) of '(.*)' failed: (.*)$/m.exec(String(stderr));
+    if (m) return `${m[1]}: ${m[2]}`;
+  }
+  return null;
+}
+
 export async function runClaude({ cmd, prompt, model, maxTurns, cwd, timeoutMs, stdoutFile, stderrFile, profileFile = null, env: baseEnv, marker = null }) {
   // LEARNING_LOOP=0 keeps a target's opt-in Stop hook from running the gate a
   // second time; the runner is the gate here.
@@ -87,5 +100,14 @@ export async function runClaude({ cmd, prompt, model, maxTurns, cwd, timeoutMs, 
   // The allowlist limits which tools Claude may call, but allowed commands such
   // as npm test run code Claude wrote. The sandbox limits what that code can do.
   const call = profileFile ? wrap(profileFile, cmd, args) : { cmd, args };
-  return runToFiles(call.cmd, call.args, { cwd, env, stdoutFile, stderrFile, timeoutMs, marker });
+  const r = await runToFiles(call.cmd, call.args, { cwd, env, stdoutFile, stderrFile, timeoutMs, marker });
+  let stderr = "";
+  if (profileFile && r.code === 71) {
+    try {
+      stderr = fs.readFileSync(stderrFile, "utf8");
+    } catch {
+      // No stderr file; nothing to parse.
+    }
+  }
+  return { ...r, launchError: launchError({ cmd, error: r.error, errorCode: r.errorCode, code: r.code, stderr }) };
 }

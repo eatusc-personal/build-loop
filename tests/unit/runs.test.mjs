@@ -118,6 +118,22 @@ describe("unreadable runs and the index file", () => {
   });
 });
 
+describe("run ids old and new", () => {
+  it("reads old second-resolution run folders next to new suffixed ones, in start order", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "runs-ids-"));
+    const write = (id) => {
+      const dir = path.join(home, "runs", "app", id);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({ runId: id, target: "/nowhere/app", outcome: "dry run", steps: [] }));
+    };
+    for (const id of ["20260913-100001-0a1b2c", "20260913-100000", "20260913-100000-ffffff", "20260912-235959"]) write(id);
+    const { rows } = buildIndex({ env: { BUILD_LOOP_HOME: home, BUILD_LOOP_MACHINE: "laptop" } });
+    expect(rows.map((r) => r.runId)).toEqual(["20260912-235959", "20260913-100000", "20260913-100000-ffffff", "20260913-100001-0a1b2c"]);
+    expect(rows.map((r) => r.key)).toContain("unrecorded/app/20260913-100000");
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+});
+
 describe("isLiveRun", () => {
   const alive = () => true;
   const dead = () => false;

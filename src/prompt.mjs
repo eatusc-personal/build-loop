@@ -23,6 +23,8 @@ function feedback({ attempt, attempts, previous }) {
       return `${head} It changed files outside the allowed paths, so it failed before the gate ran. Revert or move these changes:\n\n${previous.paths.map((p) => `- ${p}`).join("\n")}`;
     case "unreviewable":
       return `${head} It left content that git cannot show as a text diff, so it failed before the gate ran. Use printable characters, or an escape sequence such as \\u0000 inside a string, in these files:\n\n${previous.paths.map((p) => `- ${p}`).join("\n")}`;
+    case "gate changed":
+      return `${head} It changed the gate, which belongs to the target repository, so it failed before the gate's result could count. Put these back exactly as they are at the base commit, and make the step pass without changing them:\n\n${previous.paths.map((p) => `- ${p}`).join("\n")}`;
     case "no changes":
       return `${head} It changed no files, so it failed. The step needs a change in the working tree.`;
     case "timeout":
@@ -34,7 +36,7 @@ function feedback({ attempt, attempts, previous }) {
   }
 }
 
-export function assemblePrompt({ preamble, title = null, context, step, attempt = 1, attempts = 1, previous = null }) {
+export function assemblePrompt({ preamble, title = null, context, step, attempt = 1, attempts = 1, previous = null, protect = [] }) {
   const parts = [preamble.trim()];
   // Shared context from the top of the steps file, under the file's own title.
   if (context) parts.push(`# ${title ?? "Context for every step"}\n\n${context}`);
@@ -42,6 +44,9 @@ export function assemblePrompt({ preamble, title = null, context, step, attempt 
   if (step.doneWhen) parts.push(`DONE WHEN: ${step.doneWhen}`);
   if (step.allowed) {
     parts.push(`You may only change these paths:\n\n${step.allowed.map((p) => `- ${p}`).join("\n")}`);
+  }
+  if (protect.length) {
+    parts.push(`These paths are part of the gate. Changing any of them fails the attempt:\n\n${protect.map((p) => `- ${p}`).join("\n")}`);
   }
   if (attempt > 1 && previous) parts.push(feedback({ attempt, attempts, previous }));
   return `${parts.join("\n\n")}\n`;
