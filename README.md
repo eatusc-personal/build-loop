@@ -176,3 +176,7 @@ npm test
 ```
 
 Unit tests cover argument parsing, steps-file parsing, glob matching, gate protection, prompt assembly, the control-character scan, output parsing, report rendering, machine resolution, and run summaries and decisions. Integration tests run `bin/loop.mjs` end to end against throwaway git repos with `tests/fake-claude.mjs` in place of the Claude CLI. The real `claude` is never run by the tests.
+
+## License
+
+MIT. See [`LICENSE`](./LICENSE).
