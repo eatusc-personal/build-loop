@@ -2,7 +2,7 @@
 
 `build-loop` works through a Markdown file of build steps against a repo, one step at a time, in a private git worktree. For each step it runs the Claude CLI headless, then runs the repo's own `npm run check`. A green gate commits the step; a red one retries with the failure fed back, a bounded number of times. When it stops it leaves a branch and a report, and a person decides whether to take the branch. It replaces sitting in a session pasting the next step. It does not replace review.
 
-Node 20, zero runtime dependencies.
+I use it to run multi-step changes on my own projects. It is a personal tool, macOS first (the sandbox needs `sandbox-exec`), Node 20, with zero runtime dependencies. To try it without spending API credits, `--dry-run` prints every assembled prompt without calling Claude, and `npm test` runs the whole loop end to end against a fake Claude CLI.
 
 ## The rules it keeps
 
@@ -61,7 +61,7 @@ State lives under `~/.build-loop/` (override with `BUILD_LOOP_HOME`):
 
 Every run folder is a permanent record; `clean` never deletes one. `state.json` is the source of truth. Besides steps, attempts, and costs, it records where and how the run happened:
 
-- `machine`: a name plus the hostname. The name comes from `BUILD_LOOP_MACHINE` if set, else the one word in `~/code/agent-library/.machine` (`laptop`, `studio`), else the hostname.
+- `machine`: a name plus the hostname. The name comes from `BUILD_LOOP_MACHINE` if set, else the one word in a local `.machine` file (path set by `BUILD_LOOP_MACHINE_FILE`; the default is in `src/provenance.mjs`), for example `laptop`, else the hostname.
 - `repo.origin`: the target's origin URL. It is recorded so you can match the same repository across machines by eye; `build-loop runs` still finds a run's repository by its folder path, so a moved or re-cloned target shows as `unknown`.
 - `startedAtUtc` and `endedAtUtc` next to the local times.
 - `runner.commit` (and whether build-loop had uncommitted or untracked changes), plus the node and claude versions.
@@ -78,7 +78,7 @@ Every run folder is a permanent record; `clean` never deletes one. `state.json` 
 | `unknown` | the run came from another machine, or its target is not on this one |
 | `unfinished` | the run never wrote an outcome |
 
-A loop branch only exists on the machine that made it, so run `build-loop runs` there. If you run on more than one machine, copy the run folders to one place (for example `rsync -a ~/.build-loop/runs/ studio:.build-loop/runs/`); run ids carry a random suffix, so folders from different machines do not overwrite each other, and the machine field tells them apart. The index can be deleted at any time and rebuilt from the folders.
+A loop branch only exists on the machine that made it, so run `build-loop runs` there. If you run on more than one machine, copy the run folders to one place (for example `rsync -a ~/.build-loop/runs/ other-host:.build-loop/runs/`); run ids carry a random suffix, so folders from different machines do not overwrite each other, and the machine field tells them apart. The index can be deleted at any time and rebuilt from the folders.
 
 ## Steps file format
 
