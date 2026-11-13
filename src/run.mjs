@@ -336,7 +336,12 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
             const tamperedAfter = gate.ok ? gateTouched(afterGate) : [];
             const outsideAfter = gate.ok && !tamperedAfter.length ? outOfScope(afterGate, step.allowed) : [];
             const unreviewableAfter = gate.ok && !tamperedAfter.length && !outsideAfter.length ? checkReviewable(paths.worktree, afterGate) : [];
-            if (gate.ok && tamperedAfter.length) {
+            if (gate.ok && afterGate.length === 0) {
+              // The gate undid the attempt's last change. Nothing is left to
+              // commit, which is the same outcome as an attempt that changed nothing.
+              failure = { reason: "no changes" };
+              event(`step ${step.index} attempt ${attempt} has no changes left after the gate`);
+            } else if (gate.ok && tamperedAfter.length) {
               failure = { reason: "gate changed", paths: tamperedAfter };
               event(`step ${step.index} attempt ${attempt} changed the gate during the gate run: ${tamperedAfter.join(", ")}`);
             } else if (gate.ok && outsideAfter.length) {

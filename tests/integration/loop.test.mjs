@@ -59,6 +59,8 @@ if (status.includes("spill-control")) {
 } else if (status.includes("spill")) {
   fs.writeFileSync("gate-output.txt", "made by the gate\\n");
 }
+// "revert" makes the gate undo the attempt's only change.
+if (status.includes("revert")) fs.writeFileSync("status.txt", "green\\n");
 if (status.includes("red")) {
   console.log("CHECK SAYS RED MARKER");
   process.exit(1);
@@ -623,6 +625,21 @@ describe("build-loop against a throwaway repo", () => {
     expect(r.code).toBe(1);
     expect(r.stdout).toContain("unreviewable after the gate: notes/out.md line 1 (0x1b)");
     expect(sh(target, "git", ["rev-list", "--count", `main..${r.branch}`])).toBe("0");
+  });
+
+  it("retries with no changes when the gate removes the attempt's only change", () => {
+    const target = makeTarget();
+    const r = runLoop(target, writeSteps(stepsGreen), {
+      plan: [{ do: "write", path: "status.txt", content: "green revert\n" }, { do: "write", path: "notes/real.md", content: "real\n" }],
+    });
+    expect(r.stdout).not.toContain("error:");
+    expect(r.stdout).toContain("step 1 attempt 1 has no changes left after the gate");
+    expect(r.code).toBe(0);
+    expect(r.calls).toBe(2);
+    expect(fs.readFileSync(path.join(r.fakeState, "prompt-2.txt"), "utf8")).toContain("changed no files");
+    const state = JSON.parse(fs.readFileSync(path.join(r.runDir, "state.json"), "utf8"));
+    expect(state.steps[0].attempts[0].reason).toBe("no changes");
+    expect(sh(target, "git", ["diff", "--name-only", `main..${r.branch}`])).toBe("notes/real.md");
   });
 
   it("kills background children a Claude process leaves behind", () => {
