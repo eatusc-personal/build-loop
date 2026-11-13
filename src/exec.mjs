@@ -99,7 +99,7 @@ export function runToFiles(cmd, args, { cwd, env, stdoutFile, stderrFile, timeou
       active.delete(child.pid);
       fs.closeSync(out);
       if (err !== out) fs.closeSync(err);
-      resolve({ code: error ? 127 : code, signal, timedOut, error: error ? error.message : null });
+      resolve({ code: error ? 127 : code, signal, timedOut, error: error ? error.message : null, errorCode: error?.code ?? null });
     };
 
     child.on("error", (e) => finish(null, null, e));

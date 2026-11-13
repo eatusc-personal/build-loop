@@ -654,13 +654,22 @@ describe("build-loop against a throwaway repo", () => {
     expect(fs.existsSync(late)).toBe(false);
   });
 
-  it("reports a Claude command that does not exist instead of crashing", () => {
-    const target = makeTarget();
-    const r = runLoop(target, writeSteps(stepsGreen), { extra: ["--attempts", "1", "--claude-cmd", path.join(tmp, "no-such-claude")] });
-    expect(r.stderr).not.toContain("EBADF");
-    expect(r.code).toBe(1);
-    expect(r.report).toMatch(/\| failed \| 1 \|.*no changes/);
-  });
+  for (const sandbox of [true, false]) {
+    it(`stops at once with the launch error when the Claude command does not exist (${sandbox ? "sandboxed" : "no sandbox"})`, () => {
+      const target = makeTarget();
+      const missing = path.join(tmp, "no-such-claude");
+      const r = runLoop(target, writeSteps(stepsGreen), { extra: ["--attempts", "3", "--continue-on-fail", "--claude-cmd", missing, ...(sandbox ? [] : ["--no-sandbox"])] });
+      expect(r.stderr).not.toContain("EBADF");
+      expect(r.code).toBe(1);
+      expect(r.report).toContain("Outcome: **failed**. Claude could not be started:");
+      expect(r.report).toContain(missing);
+      expect(r.report).toMatch(/\| 1 \| Step 1: Make it green \| failed \| 1 \|.*launch error: .*(ENOENT|No such file)/);
+      const state = JSON.parse(fs.readFileSync(path.join(r.runDir, "state.json"), "utf8"));
+      expect(state.steps[0].attempts).toHaveLength(1);
+      expect(state.steps[0].attempts[0].reason).toBe("launch error");
+      expect(state.steps[0].attempts[0].launchError).toMatch(/ENOENT|No such file/);
+    });
+  }
 
   it("refuses to start from a red baseline without calling Claude", () => {
     const target = makeTarget({ status: "red" });

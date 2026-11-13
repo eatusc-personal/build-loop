@@ -295,8 +295,17 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
         const claude = parseClaudeOutput(readText(file(`${stem}.json`)));
         if (claude.total_cost_usd !== null) s.costUsd = (s.costUsd ?? 0) + claude.total_cost_usd;
         if (claude.num_turns !== null) s.turns = (s.turns ?? 0) + claude.num_turns;
-        const record = { attempt, exitCode: proc.code, timedOut: proc.timedOut, claude, reason: null, paths: [] };
+        const record = { attempt, exitCode: proc.code, timedOut: proc.timedOut, claude, reason: null, paths: [], launchError: proc.launchError ?? null };
         s.attempts.push(record);
+
+        // A command that cannot start will not start on the next attempt either.
+        if (proc.launchError) {
+          record.reason = "launch error";
+          Object.assign(s, { status: "failed", reason: `launch error: ${proc.launchError}` });
+          event(`step ${step.index} attempt ${attempt}: Claude could not be started: ${proc.launchError}`);
+          git.discardChanges(paths.worktree);
+          return finish("failed", `Claude could not be started: ${proc.launchError}`, 1);
+        }
 
         let failure = null;
         let unreviewable = [];

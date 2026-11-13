@@ -148,8 +148,8 @@ What the sandbox does not cover:
 
 The runner prints one timestamped line per event, then the report path and the branch name as the last two lines. The report has:
 
-- the outcome: `all steps landed`, `stopped`, `finished with failures`, `failed` (the install command exited non-zero or timed out), `refused` (the baseline gate was red or timed out, or install or the baseline changed files in the worktree), `dry run`, `interrupted`, or `error`; plus the base commit, branch, worktree, model, times, and total cost;
-- one row per step: `landed`, `failed`, or `skipped`, attempts used, turns and cost summed across attempts (a dash when the CLI did not report them), the failure reason (`gate`, `gate timeout`, `gate changed: <what>`, `scope: <paths>`, `unreviewable: <file and line>`, `no changes`, `timeout`), the commit, and the files changed with line counts;
+- the outcome: `all steps landed`, `stopped`, `finished with failures`, `failed` (the install command exited non-zero or timed out, or the Claude command could not be started, which stops the run at once even with `--continue-on-fail`), `refused` (the baseline gate was red or timed out, or install or the baseline changed files in the worktree), `dry run`, `interrupted`, or `error`; plus the base commit, branch, worktree, model, times, and total cost;
+- one row per step: `landed`, `failed`, or `skipped`, attempts used, turns and cost summed across attempts (a dash when the CLI did not report them), the failure reason (`gate`, `gate timeout`, `gate changed: <what>`, `scope: <paths>`, `unreviewable: <file and line>`, `no changes`, `timeout`, `launch error: <why>`), the commit, and the files changed with line counts;
 - the last 40 lines of the gate log for a failed step, or of the baseline or install log if the run never started;
 - **Review it**, **Take it**, and **Discard it** commands. **Take it** is worked out from the target's checked-out branch when the report is written: `git merge --ff-only` if that branch can fast-forward to the run's branch, a plain `git merge` if it has moved on since.
 
