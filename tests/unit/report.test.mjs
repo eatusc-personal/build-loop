@@ -149,8 +149,14 @@ describe("totalCost, runId, runPaths", () => {
     expect(totalCost([{ costUsd: null }])).toBeNull();
   });
 
-  it("formats run ids as YYYYMMDD-HHMMSS", () => {
-    expect(runId(new Date(2026, 8, 2, 7, 5, 9))).toBe("20260902-070509");
+  it("formats run ids as YYYYMMDD-HHMMSS plus a random suffix", () => {
+    expect(runId(new Date(2026, 8, 2, 7, 5, 9))).toMatch(/^20260902-070509-[0-9a-f]{6}$/);
+  });
+
+  it("gives two runs started in the same second different ids", () => {
+    const at = new Date(2026, 8, 2, 7, 5, 9);
+    const ids = new Set(Array.from({ length: 50 }, () => runId(at)));
+    expect(ids.size).toBe(50);
   });
 
   it("lays out worktree and run folders by target basename", () => {

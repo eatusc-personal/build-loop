@@ -137,7 +137,7 @@ describe("build-loop against a throwaway repo", () => {
 
     expect(r.stderr).toBe("");
     expect(r.code).toBe(0);
-    expect(r.branch).toMatch(/^loop\/\d{8}-\d{6}$/);
+    expect(r.branch).toMatch(/^loop\/\d{8}-\d{6}-[0-9a-f]{6}$/);
     expect(sh(target, "git", ["log", "-1", "--format=%s", r.branch])).toBe("loop: Step 1: Make it green");
     expect(sh(target, "git", ["diff", "--name-only", `main..${r.branch}`])).toBe("notes/a.md");
     expect(r.report).toMatch(/\| 1 \| Step 1: Make it green \| landed \| 1 \|/);
@@ -157,6 +157,44 @@ describe("build-loop against a throwaway repo", () => {
     expect(prompt).toContain("You may only change these paths:\n\n- status.txt\n- notes/**");
     expect(JSON.parse(fs.readFileSync(path.join(r.fakeState, "env-1.json"), "utf8")).LEARNING_LOOP).toBe("0");
     expect(JSON.parse(fs.readFileSync(path.join(r.fakeState, "args-1.json"), "utf8"))).toContain("dontAsk");
+  });
+
+  it("runs two same-named targets started together without sharing a run id, temp folder, or worktree", async () => {
+    const { spawn } = await import("node:child_process");
+    const home = path.join(tmp, "state");
+    const start = (target, n) => {
+      const fakeState = path.join(tmp, `fake-${n}`);
+      fs.mkdirSync(fakeState, { recursive: true });
+      const child = spawn("node", [BIN, "--target", target, "--steps", writeSteps(stepsGreen), "--install", "true", "--claude-cmd", FAKE], {
+        env: {
+          ...process.env,
+          BUILD_LOOP_HOME: home,
+          BUILD_LOOP_MACHINE: "test-machine",
+          BUILD_LOOP_PASS_ENV: "FAKE_CLAUDE_STATE,FAKE_CLAUDE_PLAN",
+          FAKE_CLAUDE_STATE: fakeState,
+          FAKE_CLAUDE_PLAN: JSON.stringify([{ do: "write", path: `notes/${n}.md`, content: `${n}\n` }]),
+        },
+      });
+      let stdout = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      return new Promise((resolve) => child.on("exit", (code) => resolve({ code, stdout, fakeState })));
+    };
+    // Same folder name in two places: the run folders are keyed by that name.
+    const targets = ["a", "b"].map((side) => {
+      const parent = path.join(tmp, side);
+      fs.mkdirSync(parent);
+      const t = makeTarget();
+      fs.renameSync(t, path.join(parent, "target-app"));
+      return path.join(parent, "target-app");
+    });
+    const [one, two] = await Promise.all([start(targets[0], "one"), start(targets[1], "two")]);
+    expect(one.code).toBe(0);
+    expect(two.code).toBe(0);
+    const branchOf = (r) => r.stdout.trim().split("\n").at(-1);
+    expect(branchOf(one)).not.toBe(branchOf(two));
+    expect(fs.readdirSync(path.join(home, "runs", "target-app"))).toHaveLength(2);
+    const tmpOf = (r) => JSON.parse(fs.readFileSync(path.join(r.fakeState, "env-1.json"), "utf8")).TMPDIR;
+    expect(tmpOf(one)).not.toBe(tmpOf(two));
   });
 
   it("records where the run happened and snapshots the steps file", () => {

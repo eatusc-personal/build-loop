@@ -66,7 +66,7 @@ export async function runLoop(opts, { out = (line) => process.stdout.write(`${li
   const id = runId(startedAt);
   const paths = runPaths(opts.target, id, env);
   if (fs.existsSync(paths.worktree) || git.branchExists(opts.target, paths.branch)) {
-    throw new Refusal(`run ${id} already exists; wait a second and retry`);
+    throw new Refusal(`run ${id} already exists; retry`);
   }
 
   const event = (msg) => out(`[${clock(now())}] ${msg}`);

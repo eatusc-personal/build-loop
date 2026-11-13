@@ -55,7 +55,7 @@ State lives under `~/.build-loop/` (override with `BUILD_LOOP_HOME`):
 ~/.build-loop/runs.jsonl                                 the run index, rebuilt by `runs`
 ```
 
-`<run-id>` is `YYYYMMDD-HHMMSS`.
+`<run-id>` is `YYYYMMDD-HHMMSS-xxxxxx`: the local start time plus six random hex characters, so runs started in the same second, on one machine or several, never share a worktree, run folder, temp folder, or process marker. Runs made before the suffix was added keep their `YYYYMMDD-HHMMSS` folders, and `runs` reads and sorts both.
 
 ## Run history
 
@@ -78,7 +78,7 @@ Every run folder is a permanent record; `clean` never deletes one. `state.json` 
 | `unknown` | the run came from another machine, or its target is not on this one |
 | `unfinished` | the run never wrote an outcome |
 
-A loop branch only exists on the machine that made it, so run `build-loop runs` there. If you run on more than one machine, copy the run folders to one place (for example `rsync -a ~/.build-loop/runs/ studio:.build-loop/runs/`); the machine field keeps them apart. The index can be deleted at any time and rebuilt from the folders.
+A loop branch only exists on the machine that made it, so run `build-loop runs` there. If you run on more than one machine, copy the run folders to one place (for example `rsync -a ~/.build-loop/runs/ studio:.build-loop/runs/`); run ids carry a random suffix, so folders from different machines do not overwrite each other, and the machine field tells them apart. The index can be deleted at any time and rebuilt from the folders.
 
 ## Steps file format
 

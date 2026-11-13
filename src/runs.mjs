@@ -115,7 +115,13 @@ export function readRuns(root) {
       }
     }
   }
-  return rows.sort((a, b) => String(a.runId).localeCompare(String(b.runId)));
+  // Plain code-unit order: a timestamp sorts before the same timestamp with a
+  // suffix, so old and new run ids interleave in start order.
+  return rows.sort((a, b) => {
+    const x = String(a.runId);
+    const y = String(b.runId);
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
 }
 
 const cost = (n) => (typeof n === "number" ? `$${n.toFixed(2)}` : "-");
